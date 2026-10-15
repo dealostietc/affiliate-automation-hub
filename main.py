@@ -5,7 +5,7 @@ from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
 from core.affiliate.converter import LinkConverter
 from db.db_manager import DatabaseManager
 
-# Initialize instances globally
+# Initialize global instances
 fetcher = MultiEcomFetcher()
 converter = LinkConverter()
 db = DatabaseManager()
@@ -21,7 +21,7 @@ async def post_to_telegram(title: str, platform: str, price: float, mrp: float, 
 
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     
-    # Professional message layout
+    # Professional message layout matching top deal channels
     message = (
         f"🔥 **{platform.upper()} PRICE DROP ALERT** 🔥\n\n"
         f"📌 **{title}**\n\n"
@@ -30,7 +30,7 @@ async def post_to_telegram(title: str, platform: str, price: float, mrp: float, 
         f"⚡ *Limited time deal, grab before price goes up!*"
     )
     
-    # Clean Inline Button
+    # Clean Inline Action Button
     keyboard = [[InlineKeyboardButton("🛒 Grab This Deal Now", url=link)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -48,6 +48,7 @@ async def post_to_telegram(title: str, platform: str, price: float, mrp: float, 
             except Exception as img_err:
                 print(f"Warning: Could not send photo ({img_err}). Falling back to text message.")
         
+        # Fallback text message
         await bot.send_message(
             chat_id=TELEGRAM_CHANNEL_ID, 
             text=message, 
@@ -60,7 +61,7 @@ async def post_to_telegram(title: str, platform: str, price: float, mrp: float, 
 def process_deal(url: str, platform: str):
     deal = {}
     
-    # Live scraping
+    # Live Scraping Execution
     if platform == "myntra":
         deal = fetcher.fetch_myntra(url)
     elif platform == "ajio":
@@ -97,9 +98,9 @@ def process_deal(url: str, platform: str):
         print(f"Skipping: Price ₹{price} is not the lowest recorded price.")
 
 if __name__ == "__main__":
-    # Add your real product URLs here
+    # Add active product URLs to monitor
     test_urls = [
-        ("https://www.myntra.com/jackets/roadster/roadster-men-solid-padded-jacket/24823432/buy", "myntra"),
+        ("https://www.croma.com/apple-airpods-4-bluetooth-headphone-with-active-noise-cancellation-white-/p/309180", "croma"),
     ]
     
     for url, platform in test_urls:
