@@ -1,0 +1,18 @@
+from moviepy.editor import ImageClip, TextClip, CompositeVideoClip
+
+def create_reels_video(image_path: str, title: str, price: float, output_path="reel.mp4"):
+    try:
+        # Load banner image as a 10-second vertical clip
+        img_clip = ImageClip(image_path).set_duration(10).resize(width=1080)
+        
+        # Overlay headline text
+        txt_clip = TextClip(f"MEGA PRICE DROP!\n₹{int(price)}", fontsize=70, color='white', bg_color='red')
+        txt_clip = txt_clip.set_pos(('center', 1400)).set_duration(10)
+
+        # Composite video canvas (1080x1920 vertical format)
+        video = CompositeVideoClip([img_clip.set_pos("center"), txt_clip], size=(1080, 1920))
+        video.write_videofile(output_path, fps=24)
+        return output_path
+    except Exception as e:
+        print(f"Video generation error: {e}")
+        return None
