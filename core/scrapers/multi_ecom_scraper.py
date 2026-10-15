@@ -1,126 +1,27 @@
-import asyncio
-from playwright.async_api import async_playwright
-import re
 
-class MultiEcomFetcher:
-    def __init__(self):
-        pass
+1. Update the Web Scraping Selector
 
-    async def _fetch_page_content(self, url: str) -> str:
-        async with async_playwright() as p:
-            # Launch headless browser in stealth mode
-            browser = await p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-            )
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 800}
-            )
-            page = await context.new_page()
-            try:
-                await page.goto(url, timeout=45000, wait_until="domcontentloaded")
-                # Wait briefly for dynamic hydration/rendering
-                await asyncio.sleep(3)
-                content = await page.content()
-                return content
-            except Exception as e:
-                print(f"Playwright navigation error for {url}: {e}")
-                return ""
-            finally:
-                await browser.close()
+E-commerce platforms frequently update their HTML structure and class names to prevent scraping or improve their frontend.
+• Inspect the URL: Open the failing product URL in a browser, right-click the page, and select Inspect.
+• Verify Element IDs/Classes: Check if the CSS selectors, XPaths, or regex patterns your automation script uses still match the live website. Update your code with the new target elements.
 
-    def fetch_croma(self, url: str) -> dict:
-        async def scrape():
-            html = await self._fetch_page_content(url)
-            if not html:
-                return {}
-            
-            from bs4 import BeautifulSoup
-            import json
-            
-            soup = BeautifulSoup(html, "html.parser")
-            
-            # Extract from Next.js payload if available
-            next_data = soup.find("script", id="__NEXT_DATA__")
-            if next_data and next_data.string:
-                try:
-                    data = json.loads(next_data.string)
-                    page_props = data.get("props", {}).get("pageProps", {})
-                    initial_state = page_props.get("initialState", {})
-                    p_data = initial_state.get("product", {}).get("productDetails", {}) or page_props.get("productData", {})
-                    
-                    title = p_data.get("name", "")
-                    price = float(p_data.get("price", {}).get("value", 0))
-                    mrp = float(p_data.get("mrp", {}).get("value", price))
-                    images = p_data.get("images", [])
-                    image_url = images[0].get("url", "") if images else ""
+2. Handle Dynamic JavaScript Rendering
 
-                    if title and price > 0:
-                        return {
-                            "platform": "Croma",
-                            "title": title,
-                            "price": price,
-                            "mrp": mrp,
-                            "image": image_url,
-                            "url": url
-                        }
-                except Exception as ex:
-                    print(f"JSON parse error in Playwright Croma scraper: {ex}")
+Many modern e-commerce sites use frameworks like React, Angular, or Next.js, meaning the product details are loaded dynamically via JavaScript rather than plain HTML.
+• The Problem: If your tool uses a basic HTTP request library (like requests in Python), it will only see the raw, unrendered HTML shell.
+• The Solution: Switch to a headless browser automation tool like Selenium, Playwright, or Puppeteer that allows the page's JavaScript to execute fully before attempting to extract data.
 
-            # Fallback DOM selectors for Croma
-            title_elem = soup.find("h1")
-            title = title_elem.get_text(strip=True) if title_elem else "Croma Product"
-            
-            # Try finding price via common classes
-            price_elem = soup.find("span", {"id": "pdp-product-discount-price"}) or soup.find("span", class_=lambda c: c and "amount" in c)
-            price = 0.0
-            if price_elem:
-                try:
-                    price = float(price_elem.get_text().replace("₹", "").replace(",", "").strip())
-                except ValueError:
-                    pass
+3. Check for Anti-Bot Measures
 
-            return {
-                "platform": "Croma",
-                "title": title,
-                "price": price,
-                "mrp": price,
-                "image": "",
-                "url": url
-            }
+If the extraction fails consistently on certain platforms, you might be getting blocked by anti-bot walls (e.g., Cloudflare, Akamai).
+• Signs: The script receives a 403 Forbidden or 503 Service Unavailable error instead of the page content.
+• Fixes:
+	• Add realistic User-Agent headers to your requests.
+	• Implement delays and randomized intervals between requests to mimic human behavior.
+	• Use rotating proxy servers.
 
-        return asyncio.run(scrape())
+4. Bypass HTML Parsing via API or Schema Org
 
-    def fetch_myntra(self, url: str) -> dict:
-        async def scrape():
-            html = await self._fetch_page_content(url)
-            if not html:
-                return {}
-            
-            from bs4 import BeautifulSoup
-            import json
-            
-            soup = BeautifulSoup(html, "html.parser")
-            for script in soup.find_all("script"):
-                if script.string and "window.__myx =" in script.string:
-                    try:
-                        json_text = script.string.split("window.__myx =")[1].strip().rstrip(";")
-                        data = json.loads(json_text)
-                        p_data = data.get("pdpData", {})
-                        return {
-                            "platform": "Myntra",
-                            "title": p_data.get("name", ""),
-                            "price": float(p_data.get("price", {}).get("discounted", 0)),
-                            "mrp": float(p_data.get("price", {}).get("mrp", 0)),
-                            "image": p_data.get("media", {}).get("albums", [{}])[0].get("images", [{}])[0].get("imageURL", ""),
-                            "url": url
-                        }
-                    except Exception as e:
-                        print(f"Myntra parse error: {e}")
-            return {}
-
-        return asyncio.run(scrape())
-
-    def fetch_ajio(self, url: str) -> dict:
-        return {}
+Instead of scraping the messy visual layout, look for cleaner data structures embedded in the page.
+• Look for JSON-LD: Many e-commerce sites include structured data for search engines inside a <script type="application/ld+json"> tag. This contains clean product details (name, price, availability) that are highly stable and easy to parse.
+• Check Network Traffic: Open the browser's Network tab while loading the product page to see if it calls an internal API (e.g., api/v1/products/...). If it does, you can target that API directly in your automation.
