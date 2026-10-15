@@ -27,10 +27,19 @@ async def post_to_telegram(title: str, platform: str, price: float, mrp: float, 
         f"🛒 **Buy Now:** {link}"
     )
     
-    if image_url:
-        await bot.send_photo(chat_id=TELEGRAM_CHANNEL_ID, photo=image_url, caption=message, parse_mode="Markdown")
-    else:
+    try:
+        # Attempt to send with photo if available
+        if image_url:
+            try:
+                await bot.send_photo(chat_id=TELEGRAM_CHANNEL_ID, photo=image_url, caption=message, parse_mode="Markdown")
+                return
+            except Exception as img_err:
+                print(f"Warning: Could not send photo ({img_err}). Falling back to text message.")
+        
+        # Fallback to text-only message if no image or photo send failed
         await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=message, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Telegram posting error: {e}")
 
 def process_deal(url: str, platform: str):
     deal = {}
@@ -43,7 +52,8 @@ def process_deal(url: str, platform: str):
             "title": "Roadster Men Solid Padded Jacket (Test Item)",
             "price": 799.0,
             "mrp": 1999.0,
-            "image": "https://assets.myntassets.com/h_720,q_90,w_540/v1/assets/images/1234567/2020/1/1/test.jpg",
+            # Using a reliable public placeholder image URL for testing
+            "image": "https://picsum.photos/540/720",
             "url": url
         }
     else:
@@ -83,7 +93,6 @@ def process_deal(url: str, platform: str):
         print(f"Skipping: Price ₹{price} is not the lowest recorded price.")
 
 if __name__ == "__main__":
-    # Test with dummy URL (triggers mock mode) or a real e-commerce link
     test_urls = [
         ("https://www.myntra.com/jackets/roadster/roadster-men-solid-padded-jacket/1234567/buy", "myntra"),
     ]
