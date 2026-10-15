@@ -1,68 +1,13 @@
-import os
-import asyncio
-from telegram import Bot
-from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
-from core.affiliate.converter import LinkConverter
-from db.db_manager import DatabaseManager
-
-fetcher = MultiEcomFetcher()
-converter = LinkConverter()
-db = DatabaseManager()
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
-
-async def post_to_telegram(title: str, platform: str, price: float, mrp: float, discount: int, link: str, image_url: str):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
-        print("Missing Telegram Bot token or Channel ID. Printing message locally:")
-        print(f"\n[TELEGRAM PREVIEW]\nPlatform: {platform}\nTitle: {title}\nPrice: ₹{price} (MRP: ₹{mrp}, {discount}% OFF)\nLink: {link}\n")
-        return
-
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    message = (
-        f"🔥 **{platform.upper()} PRICE DROP ALERT** 🔥\n\n"
-        f"📌 **{title}**\n\n"
-        f"💰 **Offer Price:** ₹{int(price)}  ~~₹{int(mrp)}~~\n"
-        f"📉 **Discount:** {discount}% OFF\n\n"
-        f"🛒 **Buy Now:** {link}"
-    )
-    
-    try:
-        # Attempt to send with photo if available
-        if image_url:
-            try:
-                await bot.send_photo(chat_id=TELEGRAM_CHANNEL_ID, photo=image_url, caption=message, parse_mode="Markdown")
-                return
-            except Exception as img_err:
-                print(f"Warning: Could not send photo ({img_err}). Falling back to text message.")
-        
-        # Fallback to text-only message if no image or photo send failed
-        await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=message, parse_mode="Markdown")
-    except Exception as e:
-        print(f"Telegram posting error: {e}")
-
 def process_deal(url: str, platform: str):
     deal = {}
     
-    # Check if it's a test/placeholder URL
-    if "1234567" in url:
-        print("Using MOCK deal data for testing purposes...")
-        deal = {
-            "platform": "Myntra",
-            "title": "Roadster Men Solid Padded Jacket (Test Item)",
-            "price": 799.0,
-            "mrp": 1999.0,
-            # Using a reliable public placeholder image URL for testing
-            "image": "https://picsum.photos/540/720",
-            "url": url
-        }
-    else:
-        if platform == "myntra":
-            deal = fetcher.fetch_myntra(url)
-        elif platform == "ajio":
-            deal = fetcher.fetch_ajio(url)
-        elif platform == "croma":
-            deal = fetcher.fetch_croma(url)
+    # Live scraping (Mock check removed so it fetches real data)
+    if platform == "myntra":
+        deal = fetcher.fetch_myntra(url)
+    elif platform == "ajio":
+        deal = fetcher.fetch_ajio(url)
+    elif platform == "croma":
+        deal = fetcher.fetch_croma(url)
 
     if not deal or deal.get("price", 0) == 0:
         print(f"Skipping: Could not extract details for {url}")
@@ -93,8 +38,10 @@ def process_deal(url: str, platform: str):
         print(f"Skipping: Price ₹{price} is not the lowest recorded price.")
 
 if __name__ == "__main__":
+    # Replace these with real product URLs you want to track
     test_urls = [
-        ("https://www.myntra.com/jackets/roadster/roadster-men-solid-padded-jacket/1234567/buy", "myntra"),
+        ("https://www.myntra.com/your-actual-product-url-here", "myntra"),
+        ("https://www.ajio.com/your-actual-product-url-here", "ajio"),
     ]
     
     for url, platform in test_urls:
