@@ -1,56 +1,81 @@
 import os
+import asyncio
+from telegram import Bot
 from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
 from core.affiliate.converter import LinkConverter
+from db.db_manager import DatabaseManager
 
+# Initialize modules
 fetcher = MultiEcomFetcher()
 converter = LinkConverter()
+db = DatabaseManager()
 
-def evaluate_and_publish_deal(url: str, platform_type: str):
-    # 1. Scrape product information
-    if platform_type == "myntra":
-        deal = fetcher.fetch_myntra(url)
-    elif platform_type == "ajio":
-        deal = fetcher.fetch_ajio(url)
-    elif platform_type == "croma":
-        deal = fetcher.fetch_croma(url)
-    else:
-        print(f"Unsupported or custom handler required for {platform_type}")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
+
+async def post_to_telegram(title: str, platform: str, price: float, mrp: float, discount: int, link: str, image_url: str):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
+        print("Missing Telegram Bot token or Channel ID.")
         return
+
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    message = (
+        f"🔥 **{platform.upper()} PRICE DROP ALERT** 🔥\n\n"
+        f"📌 **{title}**\n\n"
+        f"💰 **Offer Price:** ₹{int(price)}  ~~₹{int(mrp)}~~\n"
+        f"📉 **Discount:** {discount}% OFF\n\n"
+        f"🛒 **Buy Now:** {link}"
+    )
+    
+    if image_url:
+        await bot.send_photo(chat_id=TELEGRAM_CHANNEL_ID, photo=image_url, caption=message, parse_mode="Markdown")
+    else:
+        await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=message, parse_mode="Markdown")
+
+def process_deal(url: str, platform: str):
+    deal = {}
+    if platform == "myntra":
+        deal = fetcher.fetch_myntra(url)
+    elif platform == "ajio":
+        deal = fetcher.fetch_ajio(url)
+    elif platform == "croma":
+        deal = fetcher.fetch_croma(url)
 
     if not deal or deal.get("price", 0) == 0:
-        print("Could not retrieve price information.")
+        print(f"Skipping: Could not extract details for {url}")
         return
 
-    # 2. Check discount logic
     price = deal["price"]
     mrp = deal.get("mrp", price)
-    discount_pct = round(((mrp - price) / mrp) * 100) if mrp > price else 0
+    discount = round(((mrp - price) / mrp) * 100) if mrp > price else 0
 
-    # Discount filter threshold (e.g., minimum 30% off)
-    if discount_pct < 30:
-        print(f"Skipping deal: Discount of {discount_pct}% is below threshold.")
+    # Discount threshold filter (e.g. >= 20% off)
+    if discount < 20:
+        print(f"Skipping: Discount of {discount}% is below threshold.")
         return
 
-    # 3. Monetize Link
-    affiliate_url = converter.convert(url, deal["platform"])
-
-    # 4. Construct Promotional Post
-    message = (
-        f"🚨 **{deal['platform'].upper()} PRICE DROP ALERT** 🚨\n\n"
-        f"🛍 **{deal['title']}**\n\n"
-        f"💥 **Offer Price:** ₹{int(price)}  ~~₹{int(mrp)}~~\n"
-        f"🔥 **Discount:** {discount_pct}% OFF\n\n"
-        f"👉 **Buy Link:** {affiliate_url}"
-    )
-
-    print("--- POST READY FOR TELEGRAM & WHATSAPP ---")
-    print(message)
-    
-    # 5. Call Telegram and WhatsApp Bot Dispatchers here
-    # telegram_bot.send(message, deal['image'])
-    # whatsapp_bot.send_to_groups(message, deal['image'])
+    # Check for historical lowest price
+    product_key = f"{deal['platform']}_{deal['title']}"
+    if db.is_lowest_price(product_key, price):
+        affiliate_link = converter.convert(url, deal["platform"])
+        asyncio.run(post_to_telegram(
+            title=deal["title"],
+            platform=deal["platform"],
+            price=price,
+            mrp=mrp,
+            discount=discount,
+            link=affiliate_link,
+            image_url=deal.get("image", "")
+        ))
+        print(f"Successfully posted deal for {deal['title']}!")
+    else:
+        print(f"Skipping: Price ₹{price} is not the lowest recorded price.")
 
 if __name__ == "__main__":
-    # Test execution
-    sample_url = "https://www.myntra.com/jackets/roadster/roadster-men-solid-padded-jacket/1234567/buy"
-    evaluate_and_publish_deal(sample_url, "myntra")
+    # Test batch URLs
+    test_urls = [
+        ("https://www.myntra.com/jackets/roadster/roadster-men-solid-padded-jacket/1234567/buy", "myntra"),
+    ]
+    
+    for url, platform in test_urls:
+        process_deal(url, platform)
