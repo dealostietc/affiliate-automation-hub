@@ -1,14 +1,71 @@
 import json
+import re
 import requests
 from bs4 import BeautifulSoup
 
 class MultiEcomFetcher:
     def __init__(self):
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
             "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         }
+
+    def fetch_croma(self, url: str) -> dict:
+        try:
+            # Extract product code/ID from Croma URL (e.g., '309180' from '/p/309180')
+            match = re.search(r'/p/(\d+)', url)
+            if not match:
+                print("Could not parse Croma product ID from URL.")
+                return {}
+            
+            product_id = match.group(1)
+            
+            # Croma internal product detail API
+            api_url = f"https://www.croma.com/api/v1/products/{product_id}"
+            
+            res = requests.get(api_url, headers=self.headers, timeout=10)
+            
+            # Fallback if API route direct check fails: Parse embedded JSON state from HTML page
+            if res.status_code != 200:
+                res = requests.get(url, headers=self.headers, timeout=10)
+                if res.status_code != 200:
+                    return {}
+                
+                soup = BeautifulSoup(res.text, "html.parser")
+                script = soup.find("script", id="__NEXT_DATA__")
+                if script and script.string:
+                    data = json.loads(script.string)
+                    p_data = data.get("props", {}).get("pageProps", {}).get("initialState", {}).get("product", {}).get("productDetails", {})
+                    return {
+                        "platform": "Croma",
+                        "title": p_data.get("name", ""),
+                        "price": float(p_data.get("price", {}).get("value", 0)),
+                        "mrp": float(p_data.get("mrp", {}).get("value", 0)),
+                        "image": p_data.get("images", [{}])[0].get("url", ""),
+                        "url": url
+                    }
+                return {}
+
+            data = res.json()
+            
+            title = data.get("name", "")
+            price = float(data.get("price", {}).get("value", 0))
+            mrp = float(data.get("mrp", {}).get("value", price))
+            images = data.get("images", [])
+            image_url = images[0].get("url", "") if images else ""
+
+            return {
+                "platform": "Croma",
+                "title": title,
+                "price": price,
+                "mrp": mrp,
+                "image": image_url,
+                "url": url
+            }
+        except Exception as e:
+            print(f"Croma scraping error: {e}")
+        return {}
 
     def fetch_myntra(self, url: str) -> dict:
         try:
@@ -32,63 +89,6 @@ class MultiEcomFetcher:
                     }
         except Exception as e:
             print(f"Myntra scraping error: {e}")
-        return {}
-
-    def fetch_croma(self, url: str) -> dict:
-        try:
-            res = requests.get(url, headers=self.headers, timeout=10)
-            if res.status_code != 200:
-                print(f"Croma returned HTTP status {res.status_code}")
-                return {}
-
-            soup = BeautifulSoup(res.text, "html.parser")
-            
-            # Extract Title
-            title_elem = soup.find("h1", class_=lambda c: c and "pd-title" in c) or soup.find("h1")
-            title = title_elem.get_text(strip=True) if title_elem else ""
-
-            # Extract Price
-            price_elem = (
-                soup.find("span", {"id": "pdp-product-discount-price"}) or
-                soup.find("span", class_=lambda c: c and ("amount" in c or "pdpPrice" in c)) or
-                soup.find("span", class_="new-price")
-            )
-            
-            price = 0.0
-            if price_elem:
-                raw_price = price_elem.get_text().replace("₹", "").replace(",", "").strip()
-                try:
-                    price = float(raw_price)
-                except ValueError:
-                    price = 0.0
-
-            # Extract MRP
-            mrp_elem = soup.find("span", class_=lambda c: c and ("old-price" in c or "mrp" in c))
-            mrp = price
-            if mrp_elem:
-                raw_mrp = mrp_elem.get_text().replace("₹", "").replace(",", "").strip()
-                try:
-                    mrp = float(raw_mrp)
-                except ValueError:
-                    mrp = price
-
-            # Extract Image URL
-            img_elem = soup.find("img", id="pdp-product-image") or soup.find("img", class_=lambda c: c and "main-img" in c)
-            image_url = img_elem.get("src", "") if img_elem else ""
-
-            if not title or price == 0:
-                return {}
-
-            return {
-                "platform": "Croma",
-                "title": title,
-                "price": price,
-                "mrp": mrp,
-                "image": image_url,
-                "url": url
-            }
-        except Exception as e:
-            print(f"Croma scraping error: {e}")
         return {}
 
     def fetch_ajio(self, url: str) -> dict:
