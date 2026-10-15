@@ -3,30 +3,42 @@ import requests
 
 class LinkConverter:
     def __init__(self):
-        self.earnkaro_api_key = os.getenv("EARNKARO_API_KEY")
-        self.cuelinks_api_key = os.getenv("CUELINKS_API_KEY")
+        self.cuelinks_key = os.getenv("CUELINKS_API_KEY")
+        self.earnkaro_key = os.getenv("EARNKARO_API_KEY")
         self.amazon_tag = os.getenv("AMAZON_AFFILIATE_TAG")
 
     def convert(self, raw_url: str, platform: str) -> str:
-        """Dispatches URL conversion based on platform capability."""
-        platform = platform.lower()
+        platform_lower = platform.lower()
         
-        # Direct Amazon Tag appending
-        if "amazon" in platform:
-            separator = "&" if "?" in raw_url else "?"
-            return f"{raw_url}{separator}tag={self.amazon_tag}"
+        # Amazon direct tagging
+        if "amazon" in platform_lower and self.amazon_tag:
+            sep = "&" if "?" in raw_url else "?"
+            return f"{raw_url}{sep}tag={self.amazon_tag}"
         
-        # All other platforms (Flipkart, Myntra, Ajio, Meesho, Croma, Shopsy, etc.) via EarnKaro API
-        endpoint = "https://api.earnkaro.com/v1/convert"
-        try:
-            res = requests.post(
-                endpoint,
-                json={"api_key": self.earnkaro_api_key, "url": raw_url},
-                timeout=5
-            )
-            if res.status_code == 200 and res.json().get("affiliate_url"):
-                return res.json()["affiliate_url"]
-        except Exception as e:
-            print(f"Error converting affiliate link via EarnKaro: {e}")
-            
+        # Cuelinks API Conversion
+        if self.cuelinks_key:
+            try:
+                res = requests.get(
+                    "https://www.cuelinks.com/api/v2/link.json",
+                    params={"url": raw_url, "api_key": self.cuelinks_key},
+                    timeout=5
+                )
+                if res.status_code == 200:
+                    return res.json().get("affiliate_url", raw_url)
+            except Exception as e:
+                print(f"Cuelinks conversion error: {e}")
+
+        # EarnKaro API fallback
+        if self.earnkaro_key:
+            try:
+                res = requests.post(
+                    "https://api.earnkaro.com/v1/convert",
+                    json={"api_key": self.earnkaro_key, "url": raw_url},
+                    timeout=5
+                )
+                if res.status_code == 200 and res.json().get("affiliate_url"):
+                    return res.json()["affiliate_url"]
+            except Exception as e:
+                print(f"EarnKaro conversion error: {e}")
+
         return raw_url
