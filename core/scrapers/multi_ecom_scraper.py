@@ -38,18 +38,53 @@ class MultiEcomFetcher:
         try:
             res = requests.get(url, headers=self.headers, timeout=10)
             if res.status_code != 200:
+                print(f"Croma returned HTTP status {res.status_code}")
                 return {}
+
             soup = BeautifulSoup(res.text, "html.parser")
-            title = soup.find("h1").get_text(strip=True) if soup.find("h1") else "Croma Product"
-            price_elem = soup.find("span", {"id": "pdp-product-discount-price"})
-            price = float(price_elem.get_text().replace("₹", "").replace(",", "").strip()) if price_elem else 0.0
             
+            # Extract Title
+            title_elem = soup.find("h1", class_=lambda c: c and "pd-title" in c) or soup.find("h1")
+            title = title_elem.get_text(strip=True) if title_elem else ""
+
+            # Extract Price
+            price_elem = (
+                soup.find("span", {"id": "pdp-product-discount-price"}) or
+                soup.find("span", class_=lambda c: c and ("amount" in c or "pdpPrice" in c)) or
+                soup.find("span", class_="new-price")
+            )
+            
+            price = 0.0
+            if price_elem:
+                raw_price = price_elem.get_text().replace("₹", "").replace(",", "").strip()
+                try:
+                    price = float(raw_price)
+                except ValueError:
+                    price = 0.0
+
+            # Extract MRP
+            mrp_elem = soup.find("span", class_=lambda c: c and ("old-price" in c or "mrp" in c))
+            mrp = price
+            if mrp_elem:
+                raw_mrp = mrp_elem.get_text().replace("₹", "").replace(",", "").strip()
+                try:
+                    mrp = float(raw_mrp)
+                except ValueError:
+                    mrp = price
+
+            # Extract Image URL
+            img_elem = soup.find("img", id="pdp-product-image") or soup.find("img", class_=lambda c: c and "main-img" in c)
+            image_url = img_elem.get("src", "") if img_elem else ""
+
+            if not title or price == 0:
+                return {}
+
             return {
                 "platform": "Croma",
                 "title": title,
                 "price": price,
-                "mrp": price,
-                "image": "",
+                "mrp": mrp,
+                "image": image_url,
                 "url": url
             }
         except Exception as e:
@@ -57,5 +92,4 @@ class MultiEcomFetcher:
         return {}
 
     def fetch_ajio(self, url: str) -> dict:
-        # Implementation for Ajio endpoint
         return {}
