@@ -1,68 +1,126 @@
-import json
+import asyncio
+from playwright.async_api import async_playwright
 import re
-import requests
 
 class MultiEcomFetcher:
     def __init__(self):
-        # Realistic browser headers
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.croma.com/",
-        }
+        pass
+
+    async def _fetch_page_content(self, url: str) -> str:
+        async with async_playwright() as p:
+            # Launch headless browser in stealth mode
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+            )
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 800}
+            )
+            page = await context.new_page()
+            try:
+                await page.goto(url, timeout=45000, wait_until="domcontentloaded")
+                # Wait briefly for dynamic hydration/rendering
+                await asyncio.sleep(3)
+                content = await page.content()
+                return content
+            except Exception as e:
+                print(f"Playwright navigation error for {url}: {e}")
+                return ""
+            finally:
+                await browser.close()
 
     def fetch_croma(self, url: str) -> dict:
-        try:
-            # Extract product code (e.g. '309180' from '/p/309180')
-            match = re.search(r'/p/(\d+)', url)
-            if not match:
-                print("Could not extract Croma product ID from URL.")
+        async def scrape():
+            html = await self._fetch_page_content(url)
+            if not html:
                 return {}
-
-            product_id = match.group(1)
             
-            # Croma's public search/product detail API
-            api_url = f"https://www.croma.com/apigateway/products/{product_id}"
+            from bs4 import BeautifulSoup
+            import json
             
-            session = requests.Session()
-            res = session.get(api_url, headers=self.headers, timeout=12)
+            soup = BeautifulSoup(html, "html.parser")
+            
+            # Extract from Next.js payload if available
+            next_data = soup.find("script", id="__NEXT_DATA__")
+            if next_data and next_data.string:
+                try:
+                    data = json.loads(next_data.string)
+                    page_props = data.get("props", {}).get("pageProps", {})
+                    initial_state = page_props.get("initialState", {})
+                    p_data = initial_state.get("product", {}).get("productDetails", {}) or page_props.get("productData", {})
+                    
+                    title = p_data.get("name", "")
+                    price = float(p_data.get("price", {}).get("value", 0))
+                    mrp = float(p_data.get("mrp", {}).get("value", price))
+                    images = p_data.get("images", [])
+                    image_url = images[0].get("url", "") if images else ""
 
-            if res.status_code == 200:
-                data = res.json()
-                title = data.get("name") or data.get("summary") or ""
-                
-                # Pricing extraction
-                price_data = data.get("price", {})
-                price = float(price_data.get("value", 0)) if isinstance(price_data, dict) else 0.0
-                
-                mrp_data = data.get("mrp", {})
-                mrp = float(mrp_data.get("value", price)) if isinstance(mrp_data, dict) else price
-                
-                # Image
-                images = data.get("images", [])
-                image_url = images[0].get("url", "") if images else ""
+                    if title and price > 0:
+                        return {
+                            "platform": "Croma",
+                            "title": title,
+                            "price": price,
+                            "mrp": mrp,
+                            "image": image_url,
+                            "url": url
+                        }
+                except Exception as ex:
+                    print(f"JSON parse error in Playwright Croma scraper: {ex}")
 
-                if title and price > 0:
-                    return {
-                        "platform": "Croma",
-                        "title": title,
-                        "price": price,
-                        "mrp": mrp,
-                        "image": image_url,
-                        "url": url
-                    }
+            # Fallback DOM selectors for Croma
+            title_elem = soup.find("h1")
+            title = title_elem.get_text(strip=True) if title_elem else "Croma Product"
+            
+            # Try finding price via common classes
+            price_elem = soup.find("span", {"id": "pdp-product-discount-price"}) or soup.find("span", class_=lambda c: c and "amount" in c)
+            price = 0.0
+            if price_elem:
+                try:
+                    price = float(price_elem.get_text().replace("₹", "").replace(",", "").strip())
+                except ValueError:
+                    pass
 
-            print(f"Croma API returned status {res.status_code}. Using fallback payload...")
-        except Exception as e:
-            print(f"Croma API fetching error: {e}")
+            return {
+                "platform": "Croma",
+                "title": title,
+                "price": price,
+                "mrp": price,
+                "image": "",
+                "url": url
+            }
 
-        # Fallback test dictionary to verify pipeline posting
-        return {
-            "platform": "Croma",
-            "title": "Apple AirPods 4 with Active Noise Cancellation (White)",
-            "price": 17900.0,
-            "mrp": 17900.0,
-            "image": "https://media.croma.com/image/upload/v1725960416/Croma%20Assets/Communication/Headphones%20and%20Earphones/Images/309180_0_i3v53p.png",
-            "url": url
-        }
+        return asyncio.run(scrape())
+
+    def fetch_myntra(self, url: str) -> dict:
+        async def scrape():
+            html = await self._fetch_page_content(url)
+            if not html:
+                return {}
+            
+            from bs4 import BeautifulSoup
+            import json
+            
+            soup = BeautifulSoup(html, "html.parser")
+            for script in soup.find_all("script"):
+                if script.string and "window.__myx =" in script.string:
+                    try:
+                        json_text = script.string.split("window.__myx =")[1].strip().rstrip(";")
+                        data = json.loads(json_text)
+                        p_data = data.get("pdpData", {})
+                        return {
+                            "platform": "Myntra",
+                            "title": p_data.get("name", ""),
+                            "price": float(p_data.get("price", {}).get("discounted", 0)),
+                            "mrp": float(p_data.get("price", {}).get("mrp", 0)),
+                            "image": p_data.get("media", {}).get("albums", [{}])[0].get("images", [{}])[0].get("imageURL", ""),
+                            "url": url
+                        }
+                    except Exception as e:
+                        print(f"Myntra parse error: {e}")
+            return {}
+
+        return asyncio.run(scrape())
+
+    def fetch_ajio(self, url: str) -> dict:
+        return {}
