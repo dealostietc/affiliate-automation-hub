@@ -1,6 +1,48 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Local Environment Variables & Secrets (CRITICAL)
 .env
+.env.local
+*.pem
+secrets.json
+
+# Local SQLite Databases & Logs
 *.db
+*.sqlite3
+*.log
+
+# Generated Media Assets (Reels / Banners / Images)
+*.png
+*.jpg
+*.jpeg
+*.mp4
+
+# Python Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE & Editor Configurations
 .vscode/
 .idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Testing & Coverage Caches
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Build & Packaging Outputs
+build/
+dist/
+*.egg-info/
