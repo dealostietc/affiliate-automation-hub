@@ -1,4 +1,4 @@
-name: Automated Multi-Platform Deal Poster
+name: Deal Automation Pipeline
 
 on:
   schedule:
@@ -6,30 +6,25 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-pipeline:
+  run-scraper:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip'
 
-      - name: Install Dependencies
+      - name: Install dependencies & Playwright browsers
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           playwright install chromium
 
-      - name: Run Main Orchestrator
+      - name: Run Main Script
         env:
-          EARNKARO_API_KEY: ${{ secrets.EARNKARO_API_KEY }}
-          CUELINKS_API_KEY: ${{ secrets.CUELINKS_API_KEY }}
-          AMAZON_AFFILIATE_TAG: ${{ secrets.AMAZON_AFFILIATE_TAG }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
         run: |
