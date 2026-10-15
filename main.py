@@ -2,13 +2,21 @@ import os
 import datetime
 from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
 
-# Define candidate URLs across supported e-commerce platforms
+# Candidate URLs across supported platforms (Croma, Myntra, Ajio)
 CANDIDATE_DEALS = [
+    # Croma Products
     ("https://www.croma.com/apple-airpods-4-bluetooth-headphone-with-active-noise-cancellation-white-/p/309180", "Croma"),
-    # Add additional candidate URLs for Croma, Myntra, or Ajio here
+    ("https://www.croma.com/apple-iphone-15-128gb-black/p/300652", "Croma"),
+    
+    # Myntra Products
+    ("https://www.myntra.com/headphones/boat/boat-rockerz-450-bluetooth-headphone/11782250/buy", "Myntra"),
+    ("https://www.myntra.com/shoes/nike/nike-men-black-air-max-running-shoes/14298118/buy", "Myntra"),
+    
+    # Ajio Products
+    ("https://www.ajio.com/p/461119105_black", "Ajio")
 ]
 
-DISCOUNT_THRESHOLD = 20  # Minimum discount percentage to post
+DISCOUNT_THRESHOLD = 20  # Minimum discount percentage required
 HISTORY_FILE = "posted_deals_today.txt"
 
 def already_posted_today(url: str) -> bool:
@@ -37,7 +45,7 @@ def run_deal_pipeline():
     fetcher = MultiEcomFetcher()
     valid_deals = []
 
-    print("Scanning candidate deals across platforms...")
+    print("Scanning candidate deals across Croma, Myntra, and Ajio...")
 
     for url, platform in CANDIDATE_DEALS:
         if already_posted_today(url):
@@ -54,7 +62,7 @@ def run_deal_pipeline():
             product_data = fetcher.fetch_ajio(url)
 
         if not product_data or not product_data.get("title"):
-            print("-> Could not extract details.")
+            print(" -> Could not extract details.")
             continue
 
         price = product_data.get("price", 0)
@@ -64,26 +72,25 @@ def run_deal_pipeline():
         if mrp > price > 0:
             discount = round(((mrp - price) / mrp) * 100, 2)
 
-        print(f"-> Found: {product_data.get('title')} | Discount: {discount}%")
+        print(f" -> Found: {product_data.get('title')} | Price: ₹{price} | MRP: ₹{mrp} | Discount: {discount}%")
 
         if discount >= DISCOUNT_THRESHOLD:
             product_data["discount"] = discount
             valid_deals.append(product_data)
         else:
-            print(f"-> Skipping: Discount of {discount}% is below threshold ({DISCOUNT_THRESHOLD}%).")
+            print(f" -> Skipping: Discount of {discount}% is below threshold ({DISCOUNT_THRESHOLD}%).")
 
     if not valid_deals:
         print("\nNo new deals met the minimum discount threshold or all were already posted today.")
         return
 
-    print(f"\nFound {len(valid_deals)} valid deal(s) ready for Telegram channel...")
+    print(f"\nDiscovered {len(valid_deals)} valid deal(s) ready for Telegram channel:")
 
-    # Iterate and post every valid deal discovered in this execution cycle
     for deal in valid_deals:
-        print(f"Posting: {deal.get('title')} ({deal.get('discount')}% off) on {deal.get('platform')}")
+        print(f"Posting: [{deal.get('platform')}] {deal.get('title')} ({deal.get('discount')}% off)")
         
-        # TODO: Call your Telegram bot API function here to send message & photo
-        # send_telegram_message(deal)
+        # TODO: Trigger Telegram Bot notification API here
+        # send_telegram_post(deal)
 
         mark_as_posted(deal.get("url"))
         print(f"Successfully posted and recorded: {deal.get('url')}")
