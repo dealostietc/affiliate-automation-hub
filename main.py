@@ -4,46 +4,29 @@ import requests
 from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
 from core.price_tracker import DIYPriceTracker
 
-# 1. Comprehensive Category Keywords across catalogs
-CATEGORY_KEYWORDS = [
-    # Electronics & Gadgets
-    "smartphones", "laptops", "headphones", "smartwatches", "bluetooth speakers", 
-    "tablets", "power banks", "trimmers", "gaming mice", "earbuds",
-    
-    # Fashion & Apparel (Men, Women & Kids)
-    "tshirt", "men shirts", "jeans", "kurti", "saree", "running shoes", 
-    "sneakers", "formal shoes", "jackets", "hoodies", "handbags", "sunglasses",
-    
-    # Home, Kitchen & Daily Essentials
-    "bedsheets", "pillows", "curtains", "wall decor", "cookware", "water bottles", 
-    "lunch boxes", "storage containers", "led bulbs", "organizers",
-    
-    # Beauty, Skincare & Personal Care
-    "face wash", "shampoo", "moisturizer", "sunscreen", "lipstick", 
-    "perfume", "hair serum", "body lotion", "makeup kit", "beard oil"
-]
-
-# 2. Flash Sales, Deals of the Day, and Promotional Landing Pages
-PROMOTIONAL_SOURCES = [
-    ("https://www.croma.com/offers", "Croma", "url"),
+# Targeted High-Urgency Feeds: Flash Deals, Deals of the Day, and Promotional Hubs
+FLASH_DEAL_SOURCES = [
+    # Croma
     ("https://www.croma.com/deal-of-the-day", "Croma", "url"),
+    ("https://www.croma.com/offers", "Croma", "url"),
+    
+    # Myntra
     ("https://www.myntra.com/shop/sale", "Myntra", "url"),
+    ("https://www.myntra.com/myntra-fashion-store?f=Discount%20Range%3A50.0_100.0", "Myntra", "url"),
+    
+    # Ajio
     ("https://www.ajio.com/c/83", "Ajio", "url"),
+    ("https://www.ajio.com/s/flash-deals", "Ajio", "url"),
+    
+    # Meesho
+    ("https://www.meesho.com/blockbuster-deals/pl/3tp", "Meesho", "url"),
+    
+    # Shopsy
+    ("https://www.shopsy.in/search?q=deal%20of%20the%20day", "Shopsy", "url"),
+    
+    # Mamaearth
     ("https://mamaearth.in/offers", "Mamaearth", "url")
 ]
-
-# Automatically build dynamic source tasks combining categories and flash sale URLs
-DYNAMIC_SOURCES = []
-for keyword in CATEGORY_KEYWORDS:
-    DYNAMIC_SOURCES.append((keyword, "Myntra", "search"))
-    DYNAMIC_SOURCES.append((keyword, "Ajio", "search"))
-    DYNAMIC_SOURCES.append((keyword, "Croma", "search"))
-    DYNAMIC_SOURCES.append((keyword, "Meesho", "search"))
-    DYNAMIC_SOURCES.append((keyword, "Shopsy", "search"))
-    DYNAMIC_SOURCES.append((keyword, "Mamaearth", "search"))
-
-for url, platform, stype in PROMOTIONAL_SOURCES:
-    DYNAMIC_SOURCES.append((url, platform, stype))
 
 DISCOUNT_THRESHOLD = 40.0  # 🔥 40% and above heavy discount threshold
 HISTORY_FILE = "posted_deals.txt"
@@ -59,7 +42,7 @@ def mark_as_posted(url: str):
         f.write(f"{url}\n")
 
 def send_telegram_post(deal: dict, tracker_info: dict):
-    """Sends formatted deal alert with DIY price history insights."""
+    """Sends formatted flash deal alert with DIY price history insights."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHANNEL_ID")
 
@@ -74,10 +57,10 @@ def send_telegram_post(deal: dict, tracker_info: dict):
     url_link = deal.get("url", "")
     image_url = deal.get("image")
 
-    lowest_badge = "🌟 **ALL-TIME LOWEST PRICE EVER!** 🌟\n" if tracker_info.get("is_lowest_ever") else ""
+    lowest_badge = "⚡ **ALL-TIME LOWEST PRICE EVER!** ⚡\n" if tracker_info.get("is_lowest_ever") else ""
 
     caption = (
-        f"🔥 <b>FLASH DEAL ALERT - {discount}% OFF!</b> 🔥\n\n"
+        f"🚨 <b>LIVE FLASH DEAL - {discount}% OFF!</b> 🚨\n\n"
         f"{lowest_badge}"
         f"📦 <b>{title}</b>\n\n"
         f"🏷️ <b>Platform:</b> {platform}\n"
@@ -85,7 +68,7 @@ def send_telegram_post(deal: dict, tracker_info: dict):
         f"❌ <b>MRP:</b> ₹{mrp:,.2f}\n"
         f"📉 <b>Tracked Lowest:</b> ₹{tracker_info.get('lowest_ever', price):,.2f}\n"
         f"📊 <b>Historical Avg:</b> ₹{tracker_info.get('historical_avg', price):,.2f}\n\n"
-        f"🔗 <a href='{url_link}'>Grab This Deal Now</a>"
+        f"🔗 <a href='{url_link}'>Grab Flash Deal Now</a>"
     )
 
     headers = {"Content-Type": "application/json"}
@@ -114,10 +97,10 @@ def run_deal_pipeline():
     tracker = DIYPriceTracker()  # Initialized with SQLite database
     valid_deals = []
 
-    print(f"🚀 Running Comprehensive Deal Pipeline ({len(DYNAMIC_SOURCES)} total feeds including categories & flash sales)...")
+    print(f"🚀 Running Flash Deals & Deals of the Day Pipeline ({len(FLASH_DEAL_SOURCES)} targeted live hubs)...")
 
-    for source, platform, source_type in DYNAMIC_SOURCES:
-        print(f"\nScanning [{platform}] -> {source}")
+    for source, platform, source_type in FLASH_DEAL_SOURCES:
+        print(f"\nScanning Live Deal Hub [{platform}] -> {source}")
         extracted_products = []
 
         try:
@@ -134,7 +117,7 @@ def run_deal_pipeline():
             elif platform.lower() == "mamaearth":
                 extracted_products = fetcher.fetch_mamaearth_search(source)
         except Exception as e:
-            print(f"⚠️ Error fetching from {platform} ({source}): {e}")
+            print(f"⚠️ Error fetching live deals from {platform} ({source}): {e}")
             continue
 
         for product in extracted_products:
@@ -166,10 +149,10 @@ def run_deal_pipeline():
                 print(f" -> Flash Deal Captured: {product.get('title')} ({discount}% off) on {platform}")
 
     if not valid_deals:
-        print("\nNo new 40%+ deals discovered.")
+        print("\nNo new 40%+ flash deals discovered in this run.")
         return
 
-    print(f"\nDiscovered {len(valid_deals)} deal(s). Broadcasting to Telegram...")
+    print(f"\nDiscovered {len(valid_deals)} flash deal(s). Broadcasting to Telegram...")
     for deal in valid_deals:
         send_telegram_post(deal, deal.get("tracker_info", {}))
         mark_as_posted(deal.get("url"))
