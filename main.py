@@ -1,4 +1,5 @@
 import os
+import re
 import datetime
 import requests
 from urllib.parse import urlparse
@@ -35,8 +36,27 @@ FLASH_DEAL_SOURCES = [
 DISCOUNT_THRESHOLD = 40.0  # 🔥 40% and above heavy discount threshold
 HISTORY_FILE = "posted_deals.txt"
 
-def normalize_url(url: str) -> str:
-    """Strips query parameters, tracking tokens, and trailing slashes for robust deduplication."""
+def get_canonical_deal_id(url: str) -> str:
+    """Extracts immutable product IDs or clean canonical URLs to prevent repetition."""
+    if not url:
+        return ""
+    
+    # 1. Amazon ASIN extraction (e.g., /dp/B08N5WRWNW or /gp/product/B08N5WRWNW)
+    asin_match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url)
+    if asin_match:
+        return f"amazon_{asin_match.group(1)}"
+
+    # 2. Ajio Product ID extraction (e.g., /p/460123456_blue)
+    ajio_match = re.search(r'/p/([a-zA-Z0-9_]+)', url)
+    if ajio_match:
+        return f"ajio_{ajio_match.group(1)}"
+
+    # 3. Myntra Product ID extraction (e.g., /1234567/buy)
+    myntra_match = re.search(r'myntra\.com/(?:[^/]+/)?(\d+)', url)
+    if myntra_match:
+        return f"myntra_{myntra_match.group(1)}"
+
+    # Fallback: Strip query parameters, fragments, and trailing slashes
     try:
         parsed = urlparse(url)
         clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
@@ -48,32 +68,32 @@ def already_posted(url: str) -> bool:
     if not os.path.exists(HISTORY_FILE):
         return False
     
-    normalized_incoming = normalize_url(url)
+    deal_id = get_canonical_deal_id(url)
     with open(HISTORY_FILE, "r") as f:
-        posted_lines = f.read().splitlines()
+        posted_ids = set(f.read().splitlines())
         
-    for line in posted_lines:
-        if normalize_url(line) == normalized_incoming:
-            return True
-    return False
+    return deal_id in posted_ids
 
 def mark_as_posted(url: str):
-    normalized_incoming = normalize_url(url)
-    posted_lines = []
+    deal_id = get_canonical_deal_id(url)
+    if not deal_id:
+        return
+        
+    posted_ids = set()
     
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r") as f:
-            posted_lines = f.read().splitlines()
+    # Ensure file exists or create it if missing
+    if not os.path.exists(HISTORY_FILE):
+        open(HISTORY_FILE, "w").close()
+
+    with open(HISTORY_FILE, "r") as f:
+        posted_ids = set(f.read().splitlines())
             
-    if normalized_incoming not in posted_lines:
-        posted_lines.append(normalized_incoming)
+    posted_ids.add(deal_id)
         
-    # Keep only the last 1000 items to prevent unbounded file growth
-    if len(posted_lines) > 1000:
-        posted_lines = posted_lines[-1000:]
-        
+    # Maintain up to 2000 unique IDs to prevent unbounded file growth
+    posted_list = list(posted_ids)[-2000:]
     with open(HISTORY_FILE, "w") as f:
-        f.write("\n".join(posted_lines) + "\n")
+        f.write("\n".join(posted_list) + "\n")
 
 def send_telegram_post(deal: dict, tracker_info: dict):
     """Sends formatted flash deal alert with DIY price history insights."""
