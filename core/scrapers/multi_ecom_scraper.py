@@ -100,6 +100,48 @@ class MultiEcomFetcher:
             print(f"Schema.org parsing error: {e}")
         return {}
 
+    def fetch_amazon_search(self, query_or_url: str) -> list:
+        async def scrape():
+            products = []
+            url = query_or_url if query_or_url.startswith("http") else f"https://www.amazon.in/s?k={urllib.parse.quote(query_or_url)}"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("div.s-result-item[data-component-type='s-search-result'], div.DealCard-module__dealCardItem_1USnhUlIxAg8uXSaFyKBqB")
+                print(f"Debug [Amazon]: Found {len(items)} items matching selectors on {url}")
+                
+                for item in items[:30]:
+                    try:
+                        a_tag = item.select_one("a.a-link-normal.s-no-outline, a[class*='link']")
+                        href = a_tag["href"] if a_tag and a_tag.has_attr("href") else ""
+                        clean_href = href.split("/ref=")[0] if href else ""
+                        full_url = f"https://www.amazon.in{clean_href}" if clean_href and not clean_href.startswith("http") else clean_href
+
+                        title_el = item.select_one("h2 span, span[class*='title']")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one("span.a-price-whole, span[class*='price']")
+                        mrp_el = item.select_one("span.a-text-price span.a-offscreen, span[class*='strike']")
+                        img_el = item.select_one("img.s-image, img")
+
+                        price = float(price_el.get_text(strip=True).replace(",", "").replace("₹", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el and img_el.has_attr("src") else ""
+
+                        if full_url and title and price > 0:
+                            products.append({
+                                "title": title,
+                                "price": price,
+                                "mrp": mrp if mrp > price else price,
+                                "url": full_url,
+                                "image": image,
+                                "platform": "Amazon"
+                            })
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
+
     def fetch_croma(self, url: str) -> dict:
         async def scrape():
             html = await self._fetch_page_content(url)
