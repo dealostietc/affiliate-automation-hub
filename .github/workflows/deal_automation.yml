@@ -8,10 +8,14 @@ on:
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
-    # Move secrets to job-level so they are globally available across all steps
+    
+    permissions:
+      contents: write
+
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+      PYTHONUNBUFFERED: "1"  # Forces Python to flush print logs immediately
 
     steps:
       - name: Checkout Repository
@@ -22,12 +26,18 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies & Playwright browsers
+      - name: Install dependencies & Playwright browsers with system deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          playwright install chromium
+          playwright install --with-deps chromium
 
       - name: Run Main Script
         run: |
           python main.py
+
+      - name: Commit and Push Posted Deals History
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update posted_deals.txt history [skip ci]"
+          file_pattern: "posted_deals.txt"
