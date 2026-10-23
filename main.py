@@ -4,16 +4,34 @@ import requests
 from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
 from core.price_tracker import DIYPriceTracker
 
-# Dynamic search terms across platforms
-DYNAMIC_SOURCES = [
-    ("headphones", "Myntra", "search"),
-    ("running shoes", "Myntra", "search"),
-    ("men shirts", "Ajio", "search"),
-    ("smartwatches", "Croma", "search"),
-    ("kurti", "Meesho", "search"),
-    ("tshirt", "Shopsy", "search"),
-    ("face wash", "Mamaearth", "search")
+# Comprehensive category keyword matrix covering all major store catalogs
+CATEGORY_KEYWORDS = [
+    # Electronics & Gadgets
+    "smartphones", "laptops", "headphones", "smartwatches", "bluetooth speakers", 
+    "tablets", "power banks", "trimmers", "gaming mice", "earbuds",
+    
+    # Fashion & Apparel (Men, Women & Kids)
+    "tshirt", "men shirts", "jeans", "kurti", "saree", "running shoes", 
+    "sneakers", "formal shoes", "jackets", "hoodies", "handbags", "sunglasses",
+    
+    # Home, Kitchen & Daily Essentials
+    "bedsheets", "pillows", "curtains", "wall decor", "cookware", "water bottles", 
+    "lunch boxes", "storage containers", "led bulbs", "organizers",
+    
+    # Beauty, Skincare & Personal Care
+    "face wash", "shampoo", "moisturizer", "sunscreen", "lipstick", 
+    "perfume", "hair serum", "body lotion", "makeup kit", "beard oil"
 ]
+
+# Automatically build dynamic source tasks across all supported platforms
+DYNAMIC_SOURCES = []
+for keyword in CATEGORY_KEYWORDS:
+    DYNAMIC_SOURCES.append((keyword, "Myntra", "search"))
+    DYNAMIC_SOURCES.append((keyword, "Ajio", "search"))
+    DYNAMIC_SOURCES.append((keyword, "Croma", "search"))
+    DYNAMIC_SOURCES.append((keyword, "Meesho", "search"))
+    DYNAMIC_SOURCES.append((keyword, "Shopsy", "search"))
+    DYNAMIC_SOURCES.append((keyword, "Mamaearth", "search"))
 
 DISCOUNT_THRESHOLD = 40.0  # 🔥 40% and above heavy discount threshold
 HISTORY_FILE = "posted_deals.txt"
@@ -84,7 +102,7 @@ def run_deal_pipeline():
     tracker = DIYPriceTracker()  # Initialized with SQLite database
     valid_deals = []
 
-    print("🚀 Running DIY Price Engine & Multi-Store Deal Pipeline...")
+    print(f"🚀 Running Comprehensive DIY Price Engine ({len(CATEGORY_KEYWORDS)} categories across {len(DYNAMIC_SOURCES)} feeds)...")
 
     for source, platform, source_type in DYNAMIC_SOURCES:
         print(f"\nScanning [{platform}] for '{source}'")
@@ -136,7 +154,7 @@ def run_deal_pipeline():
                 print(f" -> Logged & Verified Deal: {product.get('title')} ({discount}% off) on {platform}")
 
     if not valid_deals:
-        print("\nNo new 40%+ deals discovered.")
+        print("\nNo new 40%+ deals discovered across current categories.")
         return
 
     print(f"\nDiscovered {len(valid_deals)} deal(s). Broadcasting to Telegram...")
