@@ -43,7 +43,7 @@ def mark_as_posted(url: str):
         f.write(f"{today_str}|{url}\n")
 
 def send_telegram_post(deal: dict):
-    """Sends formatted deal alert with image and affiliate link to Telegram channel."""
+    """Sends formatted deal alert with automatic fallback if image fetching fails."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHANNEL_ID")
 
@@ -59,6 +59,7 @@ def send_telegram_post(deal: dict):
     mrp = deal.get("mrp", price)
     discount = deal.get("discount", 0)
     url_link = deal.get("url", "")
+    image_url = deal.get("image")
 
     caption = (
         f"🔥 <b>{title}</b>\n\n"
@@ -68,31 +69,44 @@ def send_telegram_post(deal: dict):
         f"🔗 <a href='{url_link}'>Grab This Deal</a>"
     )
 
-    image_url = deal.get("image")
+    headers = {"Content-Type": "application/json"}
+
+    # Step 1: Try sending as photo if an image URL exists
     if image_url:
-        endpoint = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+        photo_endpoint = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
         payload = {
             "chat_id": chat_id,
             "photo": image_url,
             "caption": caption,
             "parse_mode": "HTML"
         }
-    else:
-        endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": caption,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": False
-        }
+        try:
+            response = requests.post(photo_endpoint, json=payload, headers=headers)
+            res_data = response.json()
+            if res_data.get("ok"):
+                print(f"✅ Successfully posted photo deal to Telegram: {title}")
+                return
+            else:
+                print(f"⚠️ Photo post failed ({res_data.get('description')}). Falling back to text message...")
+        except Exception as e:
+            print(f"⚠️ Photo request error: {e}. Falling back to text message...")
+
+    # Step 2: Fallback to sendMessage if sendPhoto fails or no image exists
+    msg_endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": caption,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False
+    }
 
     try:
-        response = requests.post(endpoint, json=payload)
+        response = requests.post(msg_endpoint, json=payload, headers=headers)
         res_data = response.json()
         print(f"DEBUG -> Telegram API Response: {res_data}")
 
         if res_data.get("ok"):
-            print(f"✅ Successfully posted to Telegram: {title}")
+            print(f"✅ Successfully posted text deal to Telegram: {title}")
         else:
             print(f"❌ Telegram API Error: {res_data.get('description')}")
     except Exception as e:
@@ -148,7 +162,7 @@ def run_deal_pipeline():
     for deal in valid_deals:
         print(f"Posting: [{deal.get('platform')}] {deal.get('title')} ({deal.get('discount')}% off)")
         
-        # Send deal to Telegram channel
+        # Send deal to Telegram channel with automatic fallback
         send_telegram_post(deal)
 
         mark_as_posted(deal.get("url"))
