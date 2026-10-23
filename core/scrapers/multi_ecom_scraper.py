@@ -137,7 +137,7 @@ class MultiEcomFetcher:
             return {}
         return asyncio.run(scrape())
 
-    # --- DYNAMIC SEARCH & LISTING SCRAPERS ---
+    # --- DYNAMIC SEARCH, LISTING & PROMOTIONAL URL SCRAPERS ---
     def fetch_myntra_search(self, query_or_url: str) -> list:
         async def scrape():
             products = []
@@ -146,7 +146,7 @@ class MultiEcomFetcher:
             if html:
                 soup = BeautifulSoup(html, "html.parser")
                 items = soup.select("li.product-base")
-                for item in items[:20]:
+                for item in items[:25]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
@@ -178,7 +178,7 @@ class MultiEcomFetcher:
             if html:
                 soup = BeautifulSoup(html, "html.parser")
                 items = soup.select("div.item")
-                for item in items[:20]:
+                for item in items[:25]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
@@ -202,15 +202,15 @@ class MultiEcomFetcher:
             return products
         return asyncio.run(scrape())
 
-    def fetch_croma_search(self, query: str) -> list:
+    def fetch_croma_search(self, query_or_url: str) -> list:
         async def scrape():
             products = []
-            url = f"https://www.croma.com/searchB?q={urllib.parse.quote(query)}%3Arelevance&text={urllib.parse.quote(query)}"
+            url = query_or_url if query_or_url.startswith("http") else f"https://www.croma.com/searchB?q={urllib.parse.quote(query_or_url)}%3Arelevance&text={urllib.parse.quote(query_or_url)}"
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("li.product-item")
-                for item in items[:20]:
+                items = soup.select("li.product-item, div.product-card")
+                for item in items[:25]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
@@ -234,15 +234,15 @@ class MultiEcomFetcher:
             return products
         return asyncio.run(scrape())
 
-    def fetch_meesho_search(self, query: str) -> list:
+    def fetch_meesho_search(self, query_or_url: str) -> list:
         async def scrape():
             products = []
-            url = f"https://www.meesho.com/search?q={urllib.parse.quote(query)}"
+            url = query_or_url if query_or_url.startswith("http") else f"https://www.meesho.com/search?q={urllib.parse.quote(query_or_url)}"
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
                 items = soup.select("div[class*='ProductCard']")
-                for item in items[:20]:
+                for item in items[:25]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
@@ -266,15 +266,15 @@ class MultiEcomFetcher:
             return products
         return asyncio.run(scrape())
 
-    def fetch_shopsy_search(self, query: str) -> list:
+    def fetch_shopsy_search(self, query_or_url: str) -> list:
         async def scrape():
             products = []
-            url = f"https://www.shopsy.in/search?q={urllib.parse.quote(query)}"
+            url = query_or_url if query_or_url.startswith("http") else f"https://www.shopsy.in/search?q={urllib.parse.quote(query_or_url)}"
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
                 items = soup.select("div.slAVV4")
-                for item in items[:20]:
+                for item in items[:25]:
                     try:
                         a_tag = item.select_one("a.wjcEIp")
                         href = a_tag["href"] if a_tag else ""
@@ -298,15 +298,15 @@ class MultiEcomFetcher:
             return products
         return asyncio.run(scrape())
 
-    def fetch_mamaearth_search(self, query: str) -> list:
+    def fetch_mamaearth_search(self, query_or_url: str) -> list:
         async def scrape():
             products = []
-            url = f"https://mamaearth.in/search?q={urllib.parse.quote(query)}"
+            url = query_or_url if query_or_url.startswith("http") else f"https://mamaearth.in/search?q={urllib.parse.quote(query_or_url)}"
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
                 items = soup.select("div[class*='productCard']")
-                for item in items[:20]:
+                for item in items[:25]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
