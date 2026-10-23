@@ -36,14 +36,12 @@ class MultiEcomFetcher:
             await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             try:
-                # Wait for network idle to ensure flash sale API payloads complete
                 await page.goto(url, timeout=60000, wait_until="networkidle")
                 
-                # Scroll down in increments to trigger lazy-loaded flash deal grids
                 for _ in range(3):
                     await page.evaluate("window.scrollBy(0, document.body.scrollHeight / 3);")
                     await asyncio.sleep(1.5)
-                
+
                 content = await page.content()
                 return content
             except Exception as e:
@@ -143,34 +141,41 @@ class MultiEcomFetcher:
             return {}
         return asyncio.run(scrape())
 
-    # --- ROBUST FLASH DEAL & LISTING SCRAPERS WITH FALLBACK SELECTORS ---
+    # --- DYNAMIC FLASH DEALS & PROMOTIONAL URL SCRAPERS ---
     def fetch_myntra_search(self, query_or_url: str) -> list:
         async def scrape():
             products = []
-            url = query_or_url if query_or_url.startswith("http") else f"https://www.myntra.com/{urllib.parse.quote(query_or_url)}"
+            url = query_or_url if query_or_url.startswith("http") else f"https://www.myntra.com/search?p=1&q={urllib.parse.quote(query_or_url)}"
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("li.product-base, div.product-base, div[class*='product-base']")
+                items = soup.select("li.product-base")
                 for item in items[:30]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
                         full_url = f"https://www.myntra.com/{href}" if href and not href.startswith("http") else href
                         
-                        title_el = item.select_one(".product-product, .product-brand, h3, h4")
+                        title_el = item.select_one(".product-product, .product-brand")
                         title = title_el.get_text(strip=True) if title_el else ""
 
-                        price_el = item.select_one(".product-discountedPrice, span[class*='discountedPrice']")
-                        mrp_el = item.select_one(".product-strike, span[class*='strike']")
+                        price_el = item.select_one(".product-discountedPrice")
+                        mrp_el = item.select_one(".product-strike")
                         img_el = item.select_one("img")
 
                         price = float(price_el.get_text(strip=True).replace("Rs.", "").replace("₹", "").replace(",", "")) if price_el else 0.0
                         mrp = float(mrp_el.get_text(strip=True).replace("Rs.", "").replace("₹", "").replace(",", "")) if mrp_el else price
-                        image = img_el.get("src") or img_el.get("data-src") if img_el else ""
+                        image = img_el.get("src") if img_el else ""
 
                         if full_url and title and price > 0:
-                            products.append({"title": title, "price": price, "mrp": mrp, "url": full_url, "image": image, "platform": "Myntra"})
+                            products.append({
+                                "title": title,
+                                "price": price,
+                                "mrp": mrp,
+                                "url": full_url,
+                                "image": image,
+                                "platform": "Myntra"
+                            })
                     except Exception:
                         continue
             return products
@@ -183,23 +188,190 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("div.item, div.rilrtl-products-item, div[class*='item']")
+                items = soup.select("div.item")
                 for item in items[:30]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
                         full_url = f"https://www.ajio.com{href}" if href and not href.startswith("http") else href
 
-                        title_el = item.select_one(".nameCls, .brand, div[class*='name']")
+                        title_el = item.select_one(".nameCls")
                         title = title_el.get_text(strip=True) if title_el else ""
 
-                        price_el = item.select_one(".price, span[class*='price']")
-                        mrp_el = item.select_one(".orginal-price, span[class*='original']")
+                        price_el = item.select_one(".price")
+                        mrp_el = item.select_one(".orginal-price")
                         img_el = item.select_one("img")
 
                         price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
                         mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
-                        image = img_el.get("src") or img_el.get("data-src") if img_el else ""
+                        image = img_el.get("src") if img_el else ""
 
                         if full_url and title and price > 0:
-                            products.append({"title": title, "price": price, "mrp": mrp, "url": full_url, "image": image,
+                            products.append({
+                                "title": title,
+                                "price": price,
+                                "mrp": mrp,
+                                "url": full_url,
+                                "image": image,
+                                "platform": "Ajio"
+                            })
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
+
+    def fetch_croma_search(self, query_or_url: str) -> list:
+        async def scrape():
+            products = []
+            url = query_or_url if query_or_url.startswith("http") else f"https://www.croma.com/searchB?q={urllib.parse.quote(query_or_url)}%3Arelevance&text={urllib.parse.quote(query_or_url)}"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("li.product-item, div.product-card")
+                for item in items[:30]:
+                    try:
+                        a_tag = item.select_one("a")
+                        href = a_tag["href"] if a_tag else ""
+                        full_url = f"https://www.croma.com{href}" if href and not href.startswith("http") else href
+
+                        title_el = item.select_one("h3.product-title, .plp-prod-title")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one("span.amount")
+                        mrp_el = item.select_one("span.old-price")
+                        img_el = item.select_one("img")
+
+                        price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el else ""
+
+                        if full_url and title and price > 0:
+                            products.append({
+                                "title": title,
+                                "price": price,
+                                "mrp": mrp,
+                                "url": full_url,
+                                "image": image,
+                                "platform": "Croma"
+                            })
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
+
+    def fetch_meesho_search(self, query_or_url: str) -> list:
+        async def scrape():
+            products = []
+            url = query_or_url if query_or_url.startswith("http") else f"https://www.meesho.com/search?q={urllib.parse.quote(query_or_url)}"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("div[class*='ProductCard']")
+                for item in items[:30]:
+                    try:
+                        a_tag = item.select_one("a")
+                        href = a_tag["href"] if a_tag else ""
+                        full_url = f"https://www.meesho.com{href}" if href and not href.startswith("http") else href
+
+                        title_el = item.select_one("p[class*='ProductTitle']")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one("h5[class*='Price']")
+                        mrp_el = item.select_one("p[class*='StrikeThrough']")
+                        img_el = item.select_one("img")
+
+                        price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el else ""
+
+                        if full_url and title and price > 0:
+                            products.append({
+                                "title": title,
+                                "price": price,
+                                "mrp": mrp,
+                                "url": full_url,
+                                "image": image,
+                                "platform": "Meesho"
+                            })
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
+
+    def fetch_shopsy_search(self, query_or_url: str) -> list:
+        async def scrape():
+            products = []
+            url = query_or_url if query_or_url.startswith("http") else f"https://www.shopsy.in/search?q={urllib.parse.quote(query_or_url)}"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("div.slAVV4")
+                for item in items[:30]:
+                    try:
+                        a_tag = item.select_one("a.wjcEIp")
+                        href = a_tag["href"] if a_tag else ""
+                        full_url = f"https://www.shopsy.in{href}" if href and not href.startswith("http") else href
+
+                        title_el = item.select_one("a.wjcEIp")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one("div.Nx9bqj")
+                        mrp_el = item.select_one("div.yRaY8j")
+                        img_el = item.select_one("img")
+
+                        price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el else ""
+
+                        if full_url and title and price > 0:
+                            products.append({
+                                "title": title,
+                                "price": price,
+                                "mrp": mrp,
+                                "url": full_url,
+                                "image": image,
+                                "platform": "Shopsy"
+                            })
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
+
+    def fetch_mamaearth_search(self, query_or_url: str) -> list:
+        async def scrape():
+            products = []
+            url = query_or_url if query_or_url.startswith("http") else f"https://mamaearth.in/search?q={urllib.parse.quote(query_or_url)}"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("div[class*='productCard']")
+                for item in items[:30]:
+                    try:
+                        a_tag = item.select_one("a")
+                        href = a_tag["href"] if a_tag else ""
+                        full_url = f"https://mamaearth.in{href}" if href and not href.startswith("http") else href
+
+                        title_el = item.select_one("h3, p[class*='title']")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one("span[class*='price']")
+                        mrp_el = item.select_one("span[class*='mrp']")
+                        img_el = item.select_one("img")
+
+                        price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el else ""
+
+                        if full_url and title and price > 0:
+                            products.append({
+                                "title": title,
+                                "price": price,
+                                "mrp": mrp,
+                                "url": full_url,
+                                "image": image,
+                                "platform": "Mamaearth"
+                            })
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
