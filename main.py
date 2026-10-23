@@ -7,6 +7,9 @@ from core.price_tracker import DIYPriceTracker
 
 # Targeted High-Urgency Feeds: Flash Deals, Deals of the Day, and Promotional Hubs
 FLASH_DEAL_SOURCES = [
+    # Amazon
+    ("https://www.amazon.in/gp/goldbox", "Amazon", "url"),
+    
     # Croma
     ("https://www.croma.com/deal-of-the-day", "Croma", "url"),
     ("https://www.croma.com/offers", "Croma", "url"),
@@ -135,7 +138,9 @@ def run_deal_pipeline():
         extracted_products = []
 
         try:
-            if platform.lower() == "myntra":
+            if platform.lower() == "amazon":
+                extracted_products = fetcher.fetch_amazon_search(source)
+            elif platform.lower() == "myntra":
                 extracted_products = fetcher.fetch_myntra_search(source)
             elif platform.lower() == "ajio":
                 extracted_products = fetcher.fetch_ajio_search(source)
