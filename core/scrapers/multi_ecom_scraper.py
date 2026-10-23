@@ -1,5 +1,6 @@
 import asyncio
 import json
+import urllib.parse
 from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 
@@ -63,6 +64,7 @@ class MultiEcomFetcher:
                             offers = offers[0]
                         
                         price = float(offers.get("price", 0)) if offers.get("price") else 0.0
+                        mrp = float(offers.get("highPrice", price)) if offers.get("highPrice") else price
                         image_url = data.get("image", "")
                         if isinstance(image_url, list) and len(image_url) > 0:
                             image_url = image_url[0]
@@ -71,7 +73,7 @@ class MultiEcomFetcher:
                             return {
                                 "title": title,
                                 "price": price,
-                                "mrp": price,
+                                "mrp": mrp if mrp > price else price,
                                 "image": image_url
                             }
                 except json.JSONDecodeError:
@@ -85,62 +87,11 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-
-                # Layer 1: Schema.org JSON-LD
                 schema_data = self._parse_schema_org(soup)
                 if schema_data and schema_data.get("price", 0) > 0:
                     schema_data.update({"platform": "Croma", "url": url})
                     return schema_data
-
-                # Layer 2: Next.js State Data Parsing
-                next_data = soup.find("script", id="__NEXT_DATA__")
-                if next_data and next_data.string:
-                    try:
-                        data = json.loads(next_data.string)
-                        page_props = data.get("props", {}).get("pageProps", {})
-                        initial_state = page_props.get("initialState", {})
-                        p_data = initial_state.get("product", {}).get("productDetails", {}) or page_props.get("productData", {})
-                        
-                        title = p_data.get("name", "")
-                        price = float(p_data.get("price", {}).get("value", 0))
-                        mrp = float(p_data.get("mrp", {}).get("value", price))
-                        images = p_data.get("images", [])
-                        image_url = images[0].get("url", "") if images else ""
-
-                        if title and price > 0:
-                            return {
-                                "platform": "Croma",
-                                "title": title,
-                                "price": price,
-                                "mrp": mrp,
-                                "image": image_url,
-                                "url": url
-                            }
-                    except Exception as ex:
-                        print(f"JSON parse error in Croma scraper: {ex}")
-
-            # Fallback for known test URLs
-            if "309180" in url or "airpods-4" in url:
-                return {
-                    "platform": "Croma",
-                    "title": "Apple AirPods 4 with Active Noise Cancellation (White)",
-                    "price": 13990.0,
-                    "mrp": 17900.0,
-                    "image": "https://media.croma.com/image/upload/v1725960416/Croma%20Assets/Communication/Headphones%20and%20Earphones/Images/309180_0_i3v53p.png",
-                    "url": url
-                }
-            elif "300652" in url or "iphone-15" in url:
-                return {
-                    "platform": "Croma",
-                    "title": "Apple iPhone 15 (128GB, Black)",
-                    "price": 58990.0,
-                    "mrp": 79900.0,
-                    "image": "https://media.croma.com/image/upload/v1694673191/Croma%20Assets/Communication/Mobiles/Images/300652_0_ndz33u.png",
-                    "url": url
-                }
-
             return {}
-
         return asyncio.run(scrape())
 
     def fetch_myntra(self, url: str) -> dict:
@@ -148,7 +99,6 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-
                 schema_data = self._parse_schema_org(soup)
                 if schema_data and schema_data.get("price", 0) > 0:
                     schema_data.update({"platform": "Myntra", "url": url})
@@ -160,39 +110,19 @@ class MultiEcomFetcher:
                             json_text = script.string.split("window.__myx =")[1].strip().rstrip(";")
                             data = json.loads(json_text)
                             p_data = data.get("pdpData", {})
+                            price = float(p_data.get("price", {}).get("discounted", 0))
+                            mrp = float(p_data.get("price", {}).get("mrp", price))
                             return {
                                 "platform": "Myntra",
                                 "title": p_data.get("name", ""),
-                                "price": float(p_data.get("price", {}).get("discounted", 0)),
-                                "mrp": float(p_data.get("price", {}).get("mrp", 0)),
+                                "price": price,
+                                "mrp": mrp,
                                 "image": p_data.get("media", {}).get("albums", [{}])[0].get("images", [{}])[0].get("imageURL", ""),
                                 "url": url
                             }
                         except Exception as e:
                             print(f"Myntra parse error: {e}")
-
-            # Fallback test deals for Myntra
-            if "11782250" in url or "boat-rockerz" in url:
-                return {
-                    "platform": "Myntra",
-                    "title": "boAt Rockerz 450 Bluetooth On-Ear Headphones",
-                    "price": 1299.0,
-                    "mrp": 3990.0,
-                    "image": "https://assets.myntassets.com/h_1440,q_90,w_1080/v1/assets/images/11782250/2020/4/14/boat_rockerz_450.jpg",
-                    "url": url
-                }
-            elif "14298118" in url or "air-max" in url:
-                return {
-                    "platform": "Myntra",
-                    "title": "Nike Men Black Air Max Running Shoes",
-                    "price": 5995.0,
-                    "mrp": 9995.0,
-                    "image": "https://assets.myntassets.com/h_1440,q_90,w_1080/v1/assets/images/14298118/2021/6/15/nike_air_max.jpg",
-                    "url": url
-                }
-
             return {}
-
         return asyncio.run(scrape())
 
     def fetch_ajio(self, url: str) -> dict:
@@ -204,18 +134,102 @@ class MultiEcomFetcher:
                 if schema_data and schema_data.get("price", 0) > 0:
                     schema_data.update({"platform": "Ajio", "url": url})
                     return schema_data
-
-            # Fallback test deal for Ajio
-            if "461119105" in url:
-                return {
-                    "platform": "Ajio",
-                    "title": "US Polo Assn. Men Solid Slim Fit Shirt",
-                    "price": 1199.0,
-                    "mrp": 2399.0,
-                    "image": "https://assets.ajio.com/medias/sys_master/root/461119105.jpg",
-                    "url": url
-                }
-
             return {}
+        return asyncio.run(scrape())
 
+    # --- DYNAMIC SEARCH & LISTING SCRAPERS ---
+    def fetch_myntra_search(self, query_or_url: str) -> list:
+        async def scrape():
+            products = []
+            url = query_or_url if query_or_url.startswith("http") else f"https://www.myntra.com/{urllib.parse.quote(query_or_url)}?f=Discount%20Range%3A70.0_100.0"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("li.product-base")
+                for item in items[:20]:
+                    try:
+                        a_tag = item.select_one("a")
+                        href = a_tag["href"] if a_tag else ""
+                        full_url = f"https://www.myntra.com/{href}" if href and not href.startswith("http") else href
+                        
+                        title_el = item.select_one(".product-product, .product-brand")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one(".product-discountedPrice")
+                        mrp_el = item.select_one(".product-strike")
+                        img_el = item.select_one("img")
+
+                        price = float(price_el.get_text(strip=True).replace("Rs.", "").replace("₹", "").replace(",", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("Rs.", "").replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el else ""
+
+                        if full_url and title and price > 0:
+                            products.append({"title": title, "price": price, "mrp": mrp, "url": full_url, "image": image, "platform": "Myntra"})
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
+
+    def fetch_ajio_search(self, query_or_url: str) -> list:
+        async def scrape():
+            products = []
+            url = query_or_url if query_or_url.startswith("http") else f"https://www.ajio.com/search/?text={urllib.parse.quote(query_or_url)}"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("div.item")
+                for item in items[:20]:
+                    try:
+                        a_tag = item.select_one("a")
+                        href = a_tag["href"] if a_tag else ""
+                        full_url = f"https://www.ajio.com{href}" if href and not href.startswith("http") else href
+
+                        title_el = item.select_one(".nameCls")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one(".price")
+                        mrp_el = item.select_one(".orginal-price")
+                        img_el = item.select_one("img")
+
+                        price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el else ""
+
+                        if full_url and title and price > 0:
+                            products.append({"title": title, "price": price, "mrp": mrp, "url": full_url, "image": image, "platform": "Ajio"})
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
+
+    def fetch_croma_search(self, query: str) -> list:
+        async def scrape():
+            products = []
+            url = f"https://www.croma.com/searchB?q={urllib.parse.quote(query)}%3Arelevance&text={urllib.parse.quote(query)}"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("li.product-item")
+                for item in items[:20]:
+                    try:
+                        a_tag = item.select_one("a")
+                        href = a_tag["href"] if a_tag else ""
+                        full_url = f"https://www.croma.com{href}" if href and not href.startswith("http") else href
+
+                        title_el = item.select_one("h3.product-title, .plp-prod-title")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one("span.amount")
+                        mrp_el = item.select_one("span.old-price")
+                        img_el = item.select_one("img")
+
+                        price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el else ""
+
+                        if full_url and title and price > 0:
+                            products.append({"title": title, "price": price, "mrp": mrp, "url": full_url, "image": image, "platform": "Croma"})
+                    except Exception:
+                        continue
+            return products
         return asyncio.run(scrape())
