@@ -8,6 +8,11 @@ on:
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
+    # Move secrets to job-level so they are globally available across all steps
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -24,8 +29,5 @@ jobs:
           playwright install chromium
 
       - name: Run Main Script
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
         run: |
           python main.py
