@@ -43,6 +43,9 @@ class MultiEcomFetcher:
                     await asyncio.sleep(1.5)
 
                 content = await page.content()
+                print(f"Debug: Fetched {len(content)} bytes for {url}")
+                if len(content) < 5000:
+                    print(f"⚠️ Warning: Page might be blocked or returning empty shell for {url}")
                 return content
             except Exception as e:
                 print(f"Playwright navigation error for {url}: {e}")
@@ -107,25 +110,6 @@ class MultiEcomFetcher:
                 if schema_data and schema_data.get("price", 0) > 0:
                     schema_data.update({"platform": "Myntra", "url": url})
                     return schema_data
-
-                for script in soup.find_all("script"):
-                    if script.string and "window.__myx =" in script.string:
-                        try:
-                            json_text = script.string.split("window.__myx =")[1].strip().rstrip(";")
-                            data = json.loads(json_text)
-                            p_data = data.get("pdpData", {})
-                            price = float(p_data.get("price", {}).get("discounted", 0))
-                            mrp = float(p_data.get("price", {}).get("mrp", price))
-                            return {
-                                "platform": "Myntra",
-                                "title": p_data.get("name", ""),
-                                "price": price,
-                                "mrp": mrp,
-                                "image": p_data.get("media", {}).get("albums", [{}])[0].get("images", [{}])[0].get("imageURL", ""),
-                                "url": url
-                            }
-                        except Exception as e:
-                            print(f"Myntra parse error: {e}")
             return {}
         return asyncio.run(scrape())
 
@@ -141,7 +125,7 @@ class MultiEcomFetcher:
             return {}
         return asyncio.run(scrape())
 
-    # --- DYNAMIC FLASH DEALS & PROMOTIONAL URL SCRAPERS ---
+    # --- DYNAMIC FLASH DEALS & PROMOTIONAL URL SCRAPERS WITH FALLBACK SELECTORS ---
     def fetch_myntra_search(self, query_or_url: str) -> list:
         async def scrape():
             products = []
@@ -149,18 +133,21 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("li.product-base")
+                # Broadened selector to catch both search grids and promotional landing page grids
+                items = soup.select("li.product-base, div.product-base, div[class*='product-base'], div.results-base li")
+                print(f"Debug [Myntra]: Found {len(items)} items matching selectors on {url}")
+                
                 for item in items[:30]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
                         full_url = f"https://www.myntra.com/{href}" if href and not href.startswith("http") else href
                         
-                        title_el = item.select_one(".product-product, .product-brand")
+                        title_el = item.select_one(".product-product, .product-brand, h3, h4")
                         title = title_el.get_text(strip=True) if title_el else ""
 
-                        price_el = item.select_one(".product-discountedPrice")
-                        mrp_el = item.select_one(".product-strike")
+                        price_el = item.select_one(".product-discountedPrice, span[class*='price']")
+                        mrp_el = item.select_one(".product-strike, span[class*='strike']")
                         img_el = item.select_one("img")
 
                         price = float(price_el.get_text(strip=True).replace("Rs.", "").replace("₹", "").replace(",", "")) if price_el else 0.0
@@ -171,7 +158,7 @@ class MultiEcomFetcher:
                             products.append({
                                 "title": title,
                                 "price": price,
-                                "mrp": mrp,
+                                "mrp": mrp if mrp > price else price,
                                 "url": full_url,
                                 "image": image,
                                 "platform": "Myntra"
@@ -188,18 +175,20 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("div.item")
+                items = soup.select("div.item, div.rilrtl-products-list__item, div[class*='card']")
+                print(f"Debug [Ajio]: Found {len(items)} items matching selectors on {url}")
+                
                 for item in items[:30]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
                         full_url = f"https://www.ajio.com{href}" if href and not href.startswith("http") else href
 
-                        title_el = item.select_one(".nameCls")
+                        title_el = item.select_one(".nameCls, .brand, h3")
                         title = title_el.get_text(strip=True) if title_el else ""
 
-                        price_el = item.select_one(".price")
-                        mrp_el = item.select_one(".orginal-price")
+                        price_el = item.select_one(".price, span[class*='price']")
+                        mrp_el = item.select_one(".orginal-price, span[class*='original']")
                         img_el = item.select_one("img")
 
                         price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
@@ -210,7 +199,7 @@ class MultiEcomFetcher:
                             products.append({
                                 "title": title,
                                 "price": price,
-                                "mrp": mrp,
+                                "mrp": mrp if mrp > price else price,
                                 "url": full_url,
                                 "image": image,
                                 "platform": "Ajio"
@@ -227,18 +216,20 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("li.product-item, div.product-card")
+                items = soup.select("li.product-item, div.product-card, div[class*='product-item']")
+                print(f"Debug [Croma]: Found {len(items)} items matching selectors on {url}")
+                
                 for item in items[:30]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
                         full_url = f"https://www.croma.com{href}" if href and not href.startswith("http") else href
 
-                        title_el = item.select_one("h3.product-title, .plp-prod-title")
+                        title_el = item.select_one("h3.product-title, .plp-prod-title, h3")
                         title = title_el.get_text(strip=True) if title_el else ""
 
-                        price_el = item.select_one("span.amount")
-                        mrp_el = item.select_one("span.old-price")
+                        price_el = item.select_one("span.amount, .pdp-price")
+                        mrp_el = item.select_one("span.old-price, .old-price")
                         img_el = item.select_one("img")
 
                         price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
@@ -249,7 +240,7 @@ class MultiEcomFetcher:
                             products.append({
                                 "title": title,
                                 "price": price,
-                                "mrp": mrp,
+                                "mrp": mrp if mrp > price else price,
                                 "url": full_url,
                                 "image": image,
                                 "platform": "Croma"
@@ -266,14 +257,16 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("div[class*='ProductCard']")
+                items = soup.select("div[class*='ProductCard'], div[class*='product-card']")
+                print(f"Debug [Meesho]: Found {len(items)} items matching selectors on {url}")
+                
                 for item in items[:30]:
                     try:
                         a_tag = item.select_one("a")
                         href = a_tag["href"] if a_tag else ""
                         full_url = f"https://www.meesho.com{href}" if href and not href.startswith("http") else href
 
-                        title_el = item.select_one("p[class*='ProductTitle']")
+                        title_el = item.select_one("p[class*='ProductTitle'], p")
                         title = title_el.get_text(strip=True) if title_el else ""
 
                         price_el = item.select_one("h5[class*='Price']")
@@ -288,7 +281,7 @@ class MultiEcomFetcher:
                             products.append({
                                 "title": title,
                                 "price": price,
-                                "mrp": mrp,
+                                "mrp": mrp if mrp > price else price,
                                 "url": full_url,
                                 "image": image,
                                 "platform": "Meesho"
@@ -305,14 +298,16 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("div.slAVV4")
+                items = soup.select("div.slAVV4, div[class*='slAVV4']")
+                print(f"Debug [Shopsy]: Found {len(items)} items matching selectors on {url}")
+                
                 for item in items[:30]:
                     try:
-                        a_tag = item.select_one("a.wjcEIp")
+                        a_tag = item.select_one("a.wjcEIp, a")
                         href = a_tag["href"] if a_tag else ""
                         full_url = f"https://www.shopsy.in{href}" if href and not href.startswith("http") else href
 
-                        title_el = item.select_one("a.wjcEIp")
+                        title_el = item.select_one("a.wjcEIp, a")
                         title = title_el.get_text(strip=True) if title_el else ""
 
                         price_el = item.select_one("div.Nx9bqj")
@@ -327,7 +322,7 @@ class MultiEcomFetcher:
                             products.append({
                                 "title": title,
                                 "price": price,
-                                "mrp": mrp,
+                                "mrp": mrp if mrp > price else price,
                                 "url": full_url,
                                 "image": image,
                                 "platform": "Shopsy"
@@ -344,7 +339,9 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("div[class*='productCard']")
+                items = soup.select("div[class*='productCard'], div[class*='product-card']")
+                print(f"Debug [Mamaearth]: Found {len(items)} items matching selectors on {url}")
+                
                 for item in items[:30]:
                     try:
                         a_tag = item.select_one("a")
@@ -366,7 +363,7 @@ class MultiEcomFetcher:
                             products.append({
                                 "title": title,
                                 "price": price,
-                                "mrp": mrp,
+                                "mrp": mrp if mrp > price else price,
                                 "url": full_url,
                                 "image": image,
                                 "platform": "Mamaearth"
