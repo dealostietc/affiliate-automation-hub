@@ -226,25 +226,25 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("li.product-item, div.product-card, div[class*='product-item']")
+                items = soup.select("li.product-item, div.product-card, div[class*='product-item'], div[class*='product-card'], div.cp-product")
                 print(f"Debug [Croma]: Found {len(items)} items matching selectors on {url}")
                 
                 for item in items[:30]:
                     try:
                         a_tag = item.select_one("a")
-                        href = a_tag["href"] if a_tag else ""
+                        href = a_tag["href"] if a_tag and a_tag.has_attr("href") else ""
                         full_url = f"https://www.croma.com{href}" if href and not href.startswith("http") else href
 
-                        title_el = item.select_one("h3.product-title, .plp-prod-title, h3")
+                        title_el = item.select_one("h3.product-title, .plp-prod-title, h3, a[class*='title']")
                         title = title_el.get_text(strip=True) if title_el else ""
 
-                        price_el = item.select_one("span.amount, .pdp-price")
-                        mrp_el = item.select_one("span.old-price, .old-price")
+                        price_el = item.select_one("span.amount, .pdp-price, span[class*='price']")
+                        mrp_el = item.select_one("span.old-price, .old-price, span[class*='old']")
                         img_el = item.select_one("img")
 
                         price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
                         mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
-                        image = img_el.get("src") if img_el else ""
+                        image = img_el.get("src") if img_el and img_el.has_attr("src") else ""
 
                         if full_url and title and price > 0:
                             products.append({
@@ -308,25 +308,25 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("div.slAVV4, div[class*='slAVV4']")
+                items = soup.select("div.slAVV4, div[class*='slAVV4'], div[class*='row'] > div, div[class*='_2kHMtA']")
                 print(f"Debug [Shopsy]: Found {len(items)} items matching selectors on {url}")
                 
                 for item in items[:30]:
                     try:
-                        a_tag = item.select_one("a.wjcEIp, a")
-                        href = a_tag["href"] if a_tag else ""
+                        a_tag = item.select_one("a.wjcEIp, a[class*='link'], a")
+                        href = a_tag["href"] if a_tag and a_tag.has_attr("href") else ""
                         full_url = f"https://www.shopsy.in{href}" if href and not href.startswith("http") else href
 
-                        title_el = item.select_one("a.wjcEIp, a")
+                        title_el = item.select_one("a.wjcEIp, a[class*='title'], div[class*='title']")
                         title = title_el.get_text(strip=True) if title_el else ""
 
-                        price_el = item.select_one("div.Nx9bqj")
-                        mrp_el = item.select_one("div.yRaY8j")
+                        price_el = item.select_one("div.Nx9bqj, span[class*='price']")
+                        mrp_el = item.select_one("div.yRaY8j, span[class*='strike']")
                         img_el = item.select_one("img")
 
                         price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
                         mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
-                        image = img_el.get("src") if img_el else ""
+                        image = img_el.get("src") if img_el and img_el.has_attr("src") else ""
 
                         if full_url and title and price > 0:
                             products.append({
