@@ -14,33 +14,44 @@ class MultiEcomFetcher:
                 headless=True,
                 args=[
                     "--disable-blink-features=AutomationControlled",
+                    "--disable-features=IsolateOrigins,site-per-process",
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-infobars",
                     "--window-size=1920,1080",
+                    "--start-maximized",
+                    "--disable-dev-shm-usage",
                 ]
             )
             
             context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                 viewport={"width": 1920, "height": 1080},
-                locale="en-US",
+                locale="en-IN",
                 timezone_id="Asia/Kolkata",
                 extra_http_headers={
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Language": "en-IN,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "Sec-Ch-Ua": '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+                    "Sec-Ch-Ua-Mobile": "?0",
+                    "Sec-Ch-Ua-Platform": '"Windows"',
                 }
             )
             
             page = await context.new_page()
+            
+            # Stealth injections to mask automated chromium fingerprints
             await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            await page.add_init_script("window.navigator.chrome = { runtime: {} };")
+            await page.add_init_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-IN', 'en-US', 'en']});")
             
             try:
-                await page.goto(url, timeout=60000, wait_until="networkidle")
+                await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+                await asyncio.sleep(4)  # Allow JavaScript challenge gates to settle
                 
                 for _ in range(3):
                     await page.evaluate("window.scrollBy(0, document.body.scrollHeight / 3);")
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(2)
 
                 content = await page.content()
                 print(f"Debug: Fetched {len(content)} bytes for {url}")
@@ -133,7 +144,6 @@ class MultiEcomFetcher:
             html = await self._fetch_page_content(url)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
-                # Broadened selector to catch both search grids and promotional landing page grids
                 items = soup.select("li.product-base, div.product-base, div[class*='product-base'], div.results-base li")
                 print(f"Debug [Myntra]: Found {len(items)} items matching selectors on {url}")
                 
