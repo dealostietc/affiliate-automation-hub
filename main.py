@@ -3,33 +3,27 @@ import datetime
 import requests
 from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
 
-# Candidate URLs across supported platforms (Croma, Myntra, Ajio)
-CANDIDATE_DEALS = [
-    # Croma Products
-    ("https://www.croma.com/apple-airpods-4-bluetooth-headphone-with-active-noise-cancellation-white-/p/309180", "Croma"),
-    ("https://www.croma.com/apple-iphone-15-128gb-black/p/300652", "Croma"),
-    
-    # Myntra Products
-    ("https://www.myntra.com/headphones/boat/boat-rockerz-450-bluetooth-headphone/11782250/buy", "Myntra"),
-    ("https://www.myntra.com/shoes/nike/nike-men-black-air-max-running-shoes/14298118/buy", "Myntra"),
-    
-    # Ajio Products
-    ("https://www.ajio.com/p/461119105_black", "Ajio")
+# Dynamic search terms & category listing feeds instead of hardcoded product URLs
+DYNAMIC_SOURCES = [
+    # Format: (Query or Category URL, Platform, Type: 'search' or 'category')
+    ("headphones", "Myntra", "search"),
+    ("running shoes", "Myntra", "search"),
+    ("men shirts", "Ajio", "search"),
+    ("smartwatches", "Croma", "search"),
+    ("https://www.myntra.com/men-footwear?f=Discount%20Range%3A70.0_100.0", "Myntra", "category"),
+    ("https://www.ajio.com/s/70-percent-or-more-off", "Ajio", "category")
 ]
 
-DISCOUNT_THRESHOLD = 70.0  # 🔥 Strict heavy discount threshold (70% and above)
-HISTORY_FILE = "posted_deals.txt"  # Permanent history file to stop duplicates forever
+DISCOUNT_THRESHOLD = 70.0  # 🔥 Strictly heavy discounts (70%+ off)
+HISTORY_FILE = "posted_deals.txt"
 
 def already_posted(url: str) -> bool:
     """Checks if a deal URL has ever been posted before."""
     if not os.path.exists(HISTORY_FILE):
         return False
-    
     with open(HISTORY_FILE, "r") as f:
-        posted_urls = f.read().splitlines()
-        if url in posted_urls:
-            return True
-    return False
+        posted_urls = set(f.read().splitlines())
+        return url in posted_urls
 
 def mark_as_posted(url: str):
     """Permanently records that a deal URL has been posted."""
@@ -42,7 +36,7 @@ def send_telegram_post(deal: dict):
     chat_id = os.getenv("TELEGRAM_CHANNEL_ID")
 
     if not bot_token or not chat_id:
-        print("❌ CRITICAL ERROR: Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID environment variables!")
+        print("❌ CRITICAL ERROR: Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID!")
         return
 
     title = deal.get("title", "Mega Deal")
@@ -64,7 +58,7 @@ def send_telegram_post(deal: dict):
 
     headers = {"Content-Type": "application/json"}
 
-    # Try sending as photo first
+    # 1. Try sending with photo first
     if image_url:
         photo_endpoint = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
         payload = {
@@ -74,15 +68,14 @@ def send_telegram_post(deal: dict):
             "parse_mode": "HTML"
         }
         try:
-            response = requests.post(photo_endpoint, json=payload, headers=headers)
-            res_data = response.json()
-            if res_data.get("ok"):
-                print(f"✅ Successfully posted photo deal: {title}")
+            res = requests.post(photo_endpoint, json=payload, headers=headers).json()
+            if res.get("ok"):
+                print(f"✅ Posted photo deal: {title}")
                 return
         except Exception:
             pass
 
-    # Fallback to text message
+    # 2. Fallback to text message
     msg_endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -92,12 +85,11 @@ def send_telegram_post(deal: dict):
     }
 
     try:
-        response = requests.post(msg_endpoint, json=payload, headers=headers)
-        res_data = response.json()
-        if res_data.get("ok"):
-            print(f"✅ Successfully posted text deal: {title}")
+        res = requests.post(msg_endpoint, json=payload, headers=headers).json()
+        if res.get("ok"):
+            print(f"✅ Posted text deal: {title}")
         else:
-            print(f"❌ Telegram API Error: {res_data.get('description')}")
+            print(f"❌ Telegram API Error: {res.get('description')}")
     except Exception as e:
         print(f"❌ Exception during Telegram request: {e}")
 
@@ -105,54 +97,50 @@ def run_deal_pipeline():
     fetcher = MultiEcomFetcher()
     valid_deals = []
 
-    print(f"Scanning candidate deals (Minimum discount filter: {DISCOUNT_THRESHOLD}%)...")
+    print(f"🚀 Dynamically scanning sources for 70%+ deals...")
 
-    for url, platform in CANDIDATE_DEALS:
-        if already_posted(url):
-            print(f"Skipping (Already posted permanently): {url}")
+    for source, platform, source_type in DYNAMIC_SOURCES:
+        print(f"\nScanning [{platform}] query/category: '{source}'")
+        extracted_products = []
+
+        try:
+            if hasattr(fetcher, "fetch_dynamic_deals"):
+                extracted_products = fetcher.fetch_dynamic_deals(source, platform, source_type)
+            elif platform.lower() == "myntra":
+                extracted_products = fetcher.fetch_myntra_search(source)
+            elif platform.lower() == "ajio":
+                extracted_products = fetcher.fetch_ajio_search(source)
+            elif platform.lower() == "croma":
+                extracted_products = fetcher.fetch_croma_search(source)
+        except Exception as e:
+            print(f"⚠️ Error fetching from {platform} ({source}): {e}")
             continue
 
-        print(f"Checking {platform}: {url}")
-        product_data = {}
-        if platform.lower() == "croma":
-            product_data = fetcher.fetch_croma(url)
-        elif platform.lower() == "myntra":
-            product_data = fetcher.fetch_myntra(url)
-        elif platform.lower() == "ajio":
-            product_data = fetcher.fetch_ajio(url)
+        for product in extracted_products:
+            url = product.get("url")
+            if not url or already_posted(url):
+                continue
 
-        if not product_data or not product_data.get("title"):
-            print(" -> Could not extract details.")
-            continue
+            price = float(product.get("price", 0))
+            mrp = float(product.get("mrp", price))
+            discount = 0.0
+            if mrp > price > 0:
+                discount = round(((mrp - price) / mrp) * 100, 2)
 
-        price = product_data.get("price", 0)
-        mrp = product_data.get("mrp", price)
-        
-        discount = 0.0
-        if mrp > price > 0:
-            discount = round(((mrp - price) / mrp) * 100, 2)
-
-        print(f" -> Found: {product_data.get('title')} | Price: ₹{price} | MRP: ₹{mrp} | Discount: {discount}%")
-
-        if discount >= DISCOUNT_THRESHOLD:
-            product_data["discount"] = discount
-            product_data["url"] = url
-            product_data["platform"] = platform
-            valid_deals.append(product_data)
-        else:
-            print(f" -> Skipping: Discount of {discount}% is below the 70% threshold.")
+            if discount >= DISCOUNT_THRESHOLD:
+                product["discount"] = discount
+                product["platform"] = platform
+                valid_deals.append(product)
+                print(f" -> FOUND 70%+ DEAL: {product.get('title')} ({discount}% off)")
 
     if not valid_deals:
-        print("\nNo new deals met the heavy 70%+ discount threshold today.")
+        print("\nNo new 70%+ deals discovered across current dynamic feeds.")
         return
 
-    print(f"\nDiscovered {len(valid_deals)} heavy discount deal(s):")
-
+    print(f"\nDiscovered {len(valid_deals)} new heavy deal(s). Posting to Telegram...")
     for deal in valid_deals:
-        print(f"Posting: [{deal.get('platform')}] {deal.get('title')} ({deal.get('discount')}% off)")
         send_telegram_post(deal)
         mark_as_posted(deal.get("url"))
-        print(f"Recorded in permanent history: {deal.get('url')}")
 
 if __name__ == "__main__":
     run_deal_pipeline()
