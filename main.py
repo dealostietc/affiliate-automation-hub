@@ -2,7 +2,7 @@ import os
 import datetime
 import requests
 from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
-from core.price_tracker import PriceTracker
+from core.price_tracker import DIYPriceTracker
 
 # Dynamic search terms across platforms
 DYNAMIC_SOURCES = [
@@ -15,7 +15,7 @@ DYNAMIC_SOURCES = [
     ("face wash", "Mamaearth", "search")
 ]
 
-DISCOUNT_THRESHOLD = 40.0  # 🔥 Updated threshold (40% and above)
+DISCOUNT_THRESHOLD = 40.0  # 🔥 40% and above heavy discount threshold
 HISTORY_FILE = "posted_deals.txt"
 
 def already_posted(url: str) -> bool:
@@ -29,7 +29,7 @@ def mark_as_posted(url: str):
         f.write(f"{url}\n")
 
 def send_telegram_post(deal: dict, tracker_info: dict):
-    """Sends formatted deal alert with price history insights."""
+    """Sends formatted deal alert with DIY price history insights."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHANNEL_ID")
 
@@ -44,7 +44,7 @@ def send_telegram_post(deal: dict, tracker_info: dict):
     url_link = deal.get("url", "")
     image_url = deal.get("image")
 
-    lowest_badge = "🌟 **LOWEST PRICE EVER!** 🌟\n" if tracker_info.get("is_lowest_ever") else ""
+    lowest_badge = "🌟 **ALL-TIME LOWEST PRICE EVER!** 🌟\n" if tracker_info.get("is_lowest_ever") else ""
 
     caption = (
         f"🔥 <b>DEAL ALERT - {discount}% OFF!</b> 🔥\n\n"
@@ -53,7 +53,8 @@ def send_telegram_post(deal: dict, tracker_info: dict):
         f"🏷️ <b>Platform:</b> {platform}\n"
         f"💰 <b>Deal Price:</b> ₹{price:,.2f}\n"
         f"❌ <b>MRP:</b> ₹{mrp:,.2f}\n"
-        f"📉 <b>Tracked Lowest:</b> ₹{tracker_info.get('lowest_ever', price):,.2f}\n\n"
+        f"📉 <b>Tracked Lowest:</b> ₹{tracker_info.get('lowest_ever', price):,.2f}\n"
+        f"📊 <b>Historical Avg:</b> ₹{tracker_info.get('historical_avg', price):,.2f}\n\n"
         f"🔗 <a href='{url_link}'>Grab This Deal Now</a>"
     )
 
@@ -80,10 +81,10 @@ def send_telegram_post(deal: dict, tracker_info: dict):
 
 def run_deal_pipeline():
     fetcher = MultiEcomFetcher()
-    tracker = PriceTracker()
+    tracker = DIYPriceTracker()  # Initialized with SQLite database
     valid_deals = []
 
-    print(f"🚀 Scanning sources for 40%+ discount deals with price comparison...")
+    print("🚀 Running DIY Price Engine & Multi-Store Deal Pipeline...")
 
     for source, platform, source_type in DYNAMIC_SOURCES:
         print(f"\nScanning [{platform}] for '{source}'")
@@ -121,21 +122,24 @@ def run_deal_pipeline():
                 product["discount"] = discount
                 product["platform"] = platform
                 
-                # Check price history database
-                product_key = product.get("title", "").strip().lower()
-                tracker_info = tracker.evaluate_deal(product_key, price, mrp)
+                # Log and evaluate using your DIY SQLite Price Engine
+                tracker_info = tracker.track_and_evaluate(
+                    url=url,
+                    title=product.get("title"),
+                    platform=platform,
+                    price=price,
+                    mrp=mrp
+                )
                 product["tracker_info"] = tracker_info
 
                 valid_deals.append(product)
-                print(f" -> FOUND VALID DEAL: {product.get('title')} ({discount}% off) on {platform}")
+                print(f" -> Logged & Verified Deal: {product.get('title')} ({discount}% off) on {platform}")
 
     if not valid_deals:
         print("\nNo new 40%+ deals discovered.")
         return
 
-    # Cross-platform comparison: if similar products appear on multiple stores, pick the cheapest one
-    print(f"\nDiscovered {len(valid_deals)} deal(s). Processing best price comparisons...")
-    
+    print(f"\nDiscovered {len(valid_deals)} deal(s). Broadcasting to Telegram...")
     for deal in valid_deals:
         send_telegram_post(deal, deal.get("tracker_info", {}))
         mark_as_posted(deal.get("url"))
