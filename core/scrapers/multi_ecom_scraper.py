@@ -233,3 +233,99 @@ class MultiEcomFetcher:
                         continue
             return products
         return asyncio.run(scrape())
+
+    def fetch_meesho_search(self, query: str) -> list:
+        async def scrape():
+            products = []
+            url = f"https://www.meesho.com/search?q={urllib.parse.quote(query)}"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("div[class*='ProductCard']")
+                for item in items[:20]:
+                    try:
+                        a_tag = item.select_one("a")
+                        href = a_tag["href"] if a_tag else ""
+                        full_url = f"https://www.meesho.com{href}" if href and not href.startswith("http") else href
+
+                        title_el = item.select_one("p[class*='ProductTitle']")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one("h5[class*='Price']")
+                        mrp_el = item.select_one("p[class*='StrikeThrough']")
+                        img_el = item.select_one("img")
+
+                        price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el else ""
+
+                        if full_url and title and price > 0:
+                            products.append({"title": title, "price": price, "mrp": mrp, "url": full_url, "image": image, "platform": "Meesho"})
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
+
+    def fetch_shopsy_search(self, query: str) -> list:
+        async def scrape():
+            products = []
+            url = f"https://www.shopsy.in/search?q={urllib.parse.quote(query)}"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("div.slAVV4")
+                for item in items[:20]:
+                    try:
+                        a_tag = item.select_one("a.wjcEIp")
+                        href = a_tag["href"] if a_tag else ""
+                        full_url = f"https://www.shopsy.in{href}" if href and not href.startswith("http") else href
+
+                        title_el = item.select_one("a.wjcEIp")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one("div.Nx9bqj")
+                        mrp_el = item.select_one("div.yRaY8j")
+                        img_el = item.select_one("img")
+
+                        price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el else ""
+
+                        if full_url and title and price > 0:
+                            products.append({"title": title, "price": price, "mrp": mrp, "url": full_url, "image": image, "platform": "Shopsy"})
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
+
+    def fetch_mamaearth_search(self, query: str) -> list:
+        async def scrape():
+            products = []
+            url = f"https://mamaearth.in/search?q={urllib.parse.quote(query)}"
+            html = await self._fetch_page_content(url)
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                items = soup.select("div[class*='productCard']")
+                for item in items[:20]:
+                    try:
+                        a_tag = item.select_one("a")
+                        href = a_tag["href"] if a_tag else ""
+                        full_url = f"https://mamaearth.in{href}" if href and not href.startswith("http") else href
+
+                        title_el = item.select_one("h3, p[class*='title']")
+                        title = title_el.get_text(strip=True) if title_el else ""
+
+                        price_el = item.select_one("span[class*='price']")
+                        mrp_el = item.select_one("span[class*='mrp']")
+                        img_el = item.select_one("img")
+
+                        price = float(price_el.get_text(strip=True).replace("₹", "").replace(",", "")) if price_el else 0.0
+                        mrp = float(mrp_el.get_text(strip=True).replace("₹", "").replace(",", "")) if mrp_el else price
+                        image = img_el.get("src") if img_el else ""
+
+                        if full_url and title and price > 0:
+                            products.append({"title": title, "price": price, "mrp": mrp, "url": full_url, "image": image, "platform": "Mamaearth"})
+                    except Exception:
+                        continue
+            return products
+        return asyncio.run(scrape())
