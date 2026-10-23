@@ -1,6 +1,7 @@
 import os
 import datetime
 import requests
+from urllib.parse import urlparse
 from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
 from core.price_tracker import DIYPriceTracker
 
@@ -31,15 +32,45 @@ FLASH_DEAL_SOURCES = [
 DISCOUNT_THRESHOLD = 40.0  # 🔥 40% and above heavy discount threshold
 HISTORY_FILE = "posted_deals.txt"
 
+def normalize_url(url: str) -> str:
+    """Strips query parameters, tracking tokens, and trailing slashes for robust deduplication."""
+    try:
+        parsed = urlparse(url)
+        clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
+        return clean_url
+    except Exception:
+        return url.strip()
+
 def already_posted(url: str) -> bool:
     if not os.path.exists(HISTORY_FILE):
         return False
+    
+    normalized_incoming = normalize_url(url)
     with open(HISTORY_FILE, "r") as f:
-        return url in f.read().splitlines()
+        posted_lines = f.read().splitlines()
+        
+    for line in posted_lines:
+        if normalize_url(line) == normalized_incoming:
+            return True
+    return False
 
 def mark_as_posted(url: str):
-    with open(HISTORY_FILE, "a") as f:
-        f.write(f"{url}\n")
+    normalized_incoming = normalize_url(url)
+    posted_lines = []
+    
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "r") as f:
+            posted_lines = f.read().splitlines()
+            
+    if normalized_incoming not in posted_lines:
+        posted_lines.append(normalized_incoming)
+        
+    # Keep only the last 1000 items to prevent unbounded file growth
+    if len(posted_lines) > 1000:
+        posted_lines = posted_lines[-1000:]
+        
+    with open(HISTORY_FILE, "w") as f:
+        f.write("\n".join(posted_lines) + "\n")
 
 def send_telegram_post(deal: dict, tracker_info: dict):
     """Sends formatted flash deal alert with DIY price history insights."""
