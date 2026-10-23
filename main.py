@@ -4,7 +4,7 @@ import requests
 from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
 from core.price_tracker import DIYPriceTracker
 
-# Comprehensive category keyword matrix covering all major store catalogs
+# 1. Comprehensive Category Keywords across catalogs
 CATEGORY_KEYWORDS = [
     # Electronics & Gadgets
     "smartphones", "laptops", "headphones", "smartwatches", "bluetooth speakers", 
@@ -23,7 +23,16 @@ CATEGORY_KEYWORDS = [
     "perfume", "hair serum", "body lotion", "makeup kit", "beard oil"
 ]
 
-# Automatically build dynamic source tasks across all supported platforms
+# 2. Flash Sales, Deals of the Day, and Promotional Landing Pages
+PROMOTIONAL_SOURCES = [
+    ("https://www.croma.com/offers", "Croma", "url"),
+    ("https://www.croma.com/deal-of-the-day", "Croma", "url"),
+    ("https://www.myntra.com/shop/sale", "Myntra", "url"),
+    ("https://www.ajio.com/c/83", "Ajio", "url"),
+    ("https://mamaearth.in/offers", "Mamaearth", "url")
+]
+
+# Automatically build dynamic source tasks combining categories and flash sale URLs
 DYNAMIC_SOURCES = []
 for keyword in CATEGORY_KEYWORDS:
     DYNAMIC_SOURCES.append((keyword, "Myntra", "search"))
@@ -32,6 +41,9 @@ for keyword in CATEGORY_KEYWORDS:
     DYNAMIC_SOURCES.append((keyword, "Meesho", "search"))
     DYNAMIC_SOURCES.append((keyword, "Shopsy", "search"))
     DYNAMIC_SOURCES.append((keyword, "Mamaearth", "search"))
+
+for url, platform, stype in PROMOTIONAL_SOURCES:
+    DYNAMIC_SOURCES.append((url, platform, stype))
 
 DISCOUNT_THRESHOLD = 40.0  # 🔥 40% and above heavy discount threshold
 HISTORY_FILE = "posted_deals.txt"
@@ -65,7 +77,7 @@ def send_telegram_post(deal: dict, tracker_info: dict):
     lowest_badge = "🌟 **ALL-TIME LOWEST PRICE EVER!** 🌟\n" if tracker_info.get("is_lowest_ever") else ""
 
     caption = (
-        f"🔥 <b>DEAL ALERT - {discount}% OFF!</b> 🔥\n\n"
+        f"🔥 <b>FLASH DEAL ALERT - {discount}% OFF!</b> 🔥\n\n"
         f"{lowest_badge}"
         f"📦 <b>{title}</b>\n\n"
         f"🏷️ <b>Platform:</b> {platform}\n"
@@ -102,10 +114,10 @@ def run_deal_pipeline():
     tracker = DIYPriceTracker()  # Initialized with SQLite database
     valid_deals = []
 
-    print(f"🚀 Running Comprehensive DIY Price Engine ({len(CATEGORY_KEYWORDS)} categories across {len(DYNAMIC_SOURCES)} feeds)...")
+    print(f"🚀 Running Comprehensive Deal Pipeline ({len(DYNAMIC_SOURCES)} total feeds including categories & flash sales)...")
 
     for source, platform, source_type in DYNAMIC_SOURCES:
-        print(f"\nScanning [{platform}] for '{source}'")
+        print(f"\nScanning [{platform}] -> {source}")
         extracted_products = []
 
         try:
@@ -151,10 +163,10 @@ def run_deal_pipeline():
                 product["tracker_info"] = tracker_info
 
                 valid_deals.append(product)
-                print(f" -> Logged & Verified Deal: {product.get('title')} ({discount}% off) on {platform}")
+                print(f" -> Flash Deal Captured: {product.get('title')} ({discount}% off) on {platform}")
 
     if not valid_deals:
-        print("\nNo new 40%+ deals discovered across current categories.")
+        print("\nNo new 40%+ deals discovered.")
         return
 
     print(f"\nDiscovered {len(valid_deals)} deal(s). Broadcasting to Telegram...")
