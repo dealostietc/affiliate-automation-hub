@@ -1,3 +1,5 @@
+print("DEBUG: main.py started successfully!", flush=True)
+
 import os
 import re
 import datetime
