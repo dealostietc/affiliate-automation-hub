@@ -11,32 +11,25 @@ from core.price_tracker import DIYPriceTracker
 # 🎛️ E-COMMERCE PLATFORM FILTER TOGGLE (Set True to Enable, False to Disable)
 # =========================================================================
 ENABLED_PLATFORMS = {
-    # Heavyweight Retail & Marketplace
-    "amazon": True,         # Amazon India
-    "flipkart": True,       # Flipkart
-    "meesho": True,         # Meesho
-    "shopsy": True,         # Shopsy
-    "tata cliq": True,      # Tata Cliq
-    
-    # Fashion & Apparel
-    "myntra": True,         # Myntra
-    "ajio": True,           # Ajio
-    "nykaa": True,          # Nykaa
-    "shoppers stop": True,  # Shoppers Stop
-    
-    # Electronics & Gadgets
-    "croma": True,          # Croma
-    "vijay sales": True,    # Vijay Sales
+    "amazon": True,
+    "flipkart": True,
+    "meesho": True,
+    "shopsy": True,
+    "tata cliq": True,
+    "myntra": True,
+    "ajio": True,
+    "nykaa": True,
+    "shoppers stop": True,
+    "croma": True,
+    "vijay sales": True,
     "reliance digital": True,
-    "samsung": True,        # Samsung India
-    
-    # Beauty, Personal Care & Baby
-    "mamaearth": True,      # Mamaearth
-    "firstcry": True,       # FirstCry
+    "samsung": True,
+    "mamaearth": True,
+    "firstcry": True,
 }
 
-DISCOUNT_THRESHOLD = 40.0  # 🔥 Minimum target discount percentage
-MAX_PAGES_TO_FETCH = 10    # 🔄 Fetch up to 10 pages (~300 to 500 deals per run)
+DISCOUNT_THRESHOLD = 40.0  # 🔥 Minimum discount threshold (40%)
+MAX_PAGES_TO_FETCH = 10    # Fetch across up to 10 API pages
 CUELINKS_API_URL = "https://developers.cuelinks.com/pub_api/v3/offers"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -105,7 +98,7 @@ def mark_as_posted(url: str):
         print(f"⚠️ Error writing history: {e}", flush=True)
 
 def is_platform_enabled(platform_name: str) -> bool:
-    if not platform_name:
+    if not platform_name or platform_name.lower() == "unknown":
         return True
 
     platform_lower = platform_name.lower().strip()
@@ -114,12 +107,41 @@ def is_platform_enabled(platform_name: str) -> bool:
             return is_enabled
     return True
 
-def extract_discount_from_title(title: str) -> float:
-    """Parses text titles like 'Flat 50% OFF' or 'Get 60% Discount' to discover high deals."""
-    match = re.search(r'(\d{2})%\s*(?:off|discount)', title, re.IGNORECASE)
-    if match:
-        return float(match.group(1))
-    return 0.0
+def extract_platform_name(item: dict) -> str:
+    """Extracts actual merchant/store name from Cuelinks V3 API response object."""
+    # 1. Direct key lookups
+    candidate = (
+        item.get("merchant_name") or 
+        item.get("store_name") or 
+        item.get("merchant") or 
+        item.get("store") or 
+        item.get("brand")
+    )
+    if candidate and isinstance(candidate, str) and candidate.strip():
+        return candidate.strip()
+
+    # 2. Campaign nested object inspection
+    campaign = item.get("campaign")
+    if isinstance(campaign, dict):
+        camp_title = campaign.get("title") or campaign.get("name") or campaign.get("domain")
+        if camp_title and isinstance(camp_title, str):
+            return camp_title.strip()
+    elif isinstance(campaign, str) and campaign.strip():
+        return campaign.strip()
+
+    # 3. Domain parsing fallback from URL
+    target_url = item.get("url") or item.get("tracking_url") or item.get("affiliate_url", "")
+    if target_url:
+        try:
+            domain = urlparse(target_url).netloc.lower()
+            domain = re.sub(r'^(www\.|m\.)', '', domain)
+            parts = domain.split('.')
+            if len(parts) >= 2:
+                return parts[0].capitalize()
+        except Exception:
+            pass
+
+    return "Unknown Store"
 
 def fetch_cuelinks_deals() -> list:
     """Fetches paginated deal feeds across multiple pages from Cuelinks V3 API."""
@@ -159,20 +181,25 @@ def fetch_cuelinks_deals() -> list:
                 tracking_url = item.get("tracking_url") or item.get("affiliate_url") or item.get("url", "")
                 image = item.get("image_url") or item.get("image", "")
                 
-                campaign_field = item.get("campaign")
-                if isinstance(campaign_field, dict):
-                    platform = campaign_field.get("name", "E-Commerce")
-                else:
-                    platform = item.get("merchant") or item.get("store") or str(campaign_field or "E-Commerce")
+                # Extract clean platform name
+                platform = extract_platform_name(item)
 
                 if not is_platform_enabled(platform):
                     continue
 
+                # Strictly extract valid numerical price & MRP
                 try:
-                    price = float(item.get("special_price") or item.get("price") or item.get("selling_price", 0))
-                    mrp = float(item.get("mrp") or item.get("value") or item.get("list_price", price))
+                    price_val = item.get("special_price") or item.get("price") or item.get("selling_price")
+                    mrp_val = item.get("mrp") or item.get("value") or item.get("list_price")
+
+                    price = float(price_val) if price_val is not None else 0.0
+                    mrp = float(mrp_val) if mrp_val is not None else price
                 except (ValueError, TypeError):
                     price, mrp = 0.0, 0.0
+
+                # Reject items without valid positive price tags
+                if price <= 0 or mrp <= 0:
+                    continue
 
                 if tracking_url:
                     products.append({
@@ -188,7 +215,7 @@ def fetch_cuelinks_deals() -> list:
             print(f"❌ Error fetching page {page}: {e}", flush=True)
             break
 
-    print(f"📊 Total raw items collected across all pages: {len(products)}", flush=True)
+    print(f"📊 Total valid pricing items collected: {len(products)}", flush=True)
     return products
 
 def send_telegram_post(deal: dict, tracker_info: dict):
@@ -207,7 +234,7 @@ def send_telegram_post(deal: dict, tracker_info: dict):
     url_link = deal.get("url", "")
     image_url = deal.get("image")
 
-    lowest_badge = "⚡ **ALL-TIME LOWEST PRICE EVER!** ⚡\n" if tracker_info.get("is_lowest_ever") else ""
+    lowest_badge = "⚡ <b>ALL-TIME LOWEST PRICE EVER!</b> ⚡\n" if tracker_info.get("is_lowest_ever") else ""
 
     caption = (
         f"🚨 <b>LIVE FLASH DEAL - {discount}% OFF!</b> 🚨\n\n"
@@ -266,14 +293,11 @@ def run_deal_pipeline():
         price = float(product.get("price", 0))
         mrp = float(product.get("mrp", price))
         
-        # Method 1: Calculated Numeric Discount
-        discount = 0.0
-        if mrp > price > 0:
-            discount = round(((mrp - price) / mrp) * 100, 2)
+        # Enforce positive price validation
+        if price <= 0 or mrp <= 0 or price >= mrp:
+            continue
 
-        # Method 2: Fallback Title Keyword Discount Parsing
-        if discount == 0.0:
-            discount = extract_discount_from_title(title)
+        discount = round(((mrp - price) / mrp) * 100, 2)
 
         if discount >= DISCOUNT_THRESHOLD:
             product["discount"] = discount
@@ -291,7 +315,7 @@ def run_deal_pipeline():
             print(f" -> Best Deal Captured: {title[:40]} ({discount}% off) on {product.get('platform')}", flush=True)
 
     if not valid_deals:
-        print("\nNo new matching 40%+ deals found in this run.", flush=True)
+        print("\nNo valid product deals meeting the 40%+ discount requirement were found in this run.", flush=True)
         return
 
     print(f"\nDiscovered {len(valid_deals)} deal(s). Broadcasting to Telegram...", flush=True)
