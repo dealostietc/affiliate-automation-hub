@@ -1,9 +1,9 @@
-print("DEBUG: Direct Product Scraping & Affiliate Tag Automation started!", flush=True)
+print("DEBUG: Local Feed Direct Scraping & Affiliate Automation started!", flush=True)
 
 import os
+import json
 import re
 import requests
-from collections import Counter
 from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
 
 # =========================================================================
@@ -31,13 +31,9 @@ ENABLED_PLATFORMS = {
 
 DISCOUNT_THRESHOLD = 40.0  # 🔥 Strictly 40% or higher discount
 
-# 🔗 Your Cuelinks/Affiliate Tracking Configuration
-# Enter your Cuelinks Tracking ID or Sub-Affiliate Username below if needed, 
-# or it will automatically wrap links via Cuelinks conversion when available.
-CUELINKS_PUB_ID = os.getenv("CUELINKS_PUB_ID", "") 
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_FILE = os.path.join(BASE_DIR, "posted_deals.txt")
+DEALS_FILE = os.path.join(BASE_DIR, "deals.json")
 
 def get_canonical_deal_id(url: str) -> str:
     """Extracts clean permanent product IDs to prevent duplicate posts."""
@@ -162,10 +158,8 @@ def is_platform_enabled(platform_name: str) -> bool:
     return True
 
 def apply_affiliate_tag(product_url: str) -> str:
-    """Appends your affiliate tracking tag or wraps URL through Cuelinks conversion API."""
+    """Appends your affiliate tracking tag or converts via Cuelinks if key exists."""
     api_key = os.getenv("CUELINKS_API_KEY")
-    
-    # 1. Try official Cuelinks Link Conversion API first if key exists
     if api_key:
         try:
             convert_url = "https://developers.cuelinks.com/pub_api/v3/links/convert"
@@ -180,12 +174,11 @@ def apply_affiliate_tag(product_url: str) -> str:
         except Exception:
             pass
 
-    # 2. Fallback: Direct query parameter appending based on platform
+    # Fallback tag append
     parsed = urlparse(product_url)
     netloc = parsed.netloc.lower()
     
     if "amazon" in netloc:
-        # Append Amazon associate tag if stored in environment variables
         amz_tag = os.getenv("AMAZON_AFFILIATE_TAG", "yourtag-21")
         query_params = dict(parse_qsl(parsed.query))
         query_params['tag'] = amz_tag
@@ -202,70 +195,53 @@ def apply_affiliate_tag(product_url: str) -> str:
 
     return product_url
 
-def fetch_scraped_product_deals() -> list:
-    """Fetches high-discount SKU-level product deals from live aggregated feeds."""
-    print("🌐 Fetching live product deals from aggregated scrapers...", flush=True)
+def fetch_local_deals() -> list:
+    """Reads product deals directly from the local deals.json file."""
+    print(f"📁 Reading deals from local {DEALS_FILE}...", flush=True)
+    if not os.path.exists(DEALS_FILE):
+        print(f"⚠️ {DEALS_FILE} not found! Please create it with product entries.", flush=True)
+        return []
+
     products = []
-    platform_tally = Counter()
+    try:
+        with open(DEALS_FILE, "r", encoding="utf-8") as f:
+            items = json.load(f)
+            if isinstance(items, list):
+                for item in items:
+                    title = item.get("title", "Hot Deal")
+                    raw_url = item.get("url") or item.get("link", "")
+                    image = item.get("image", "")
+                    
+                    try:
+                        price = float(item.get("price", 0))
+                        mrp = float(item.get("mrp", price))
+                    except (ValueError, TypeError):
+                        continue
 
-    # Public aggregated product feeds covering Amazon, Flipkart, Myntra, Ajio, Blinkit, Zepto, etc.
-    feed_urls = [
-        "https://raw.githubusercontent.com/project-deals/live-feed/main/deals.json",
-        "https://raw.githubusercontent.com/dealostietc/affiliate-automation-hub/main/deals.json"
-    ]
+                    if price <= 0 or mrp <= 0 or mrp < price:
+                        continue
 
-    for feed_url in feed_urls:
-        try:
-            res = requests.get(feed_url, timeout=12)
-            if res.status_code == 200:
-                items = res.json()
-                if isinstance(items, list):
-                    for item in items:
-                        title = item.get("title", "Hot Deal")
-                        raw_url = item.get("url") or item.get("link", "")
-                        image = item.get("image", "")
-                        
-                        try:
-                            price = float(item.get("price", 0))
-                            mrp = float(item.get("mrp", price))
-                        except (ValueError, TypeError):
-                            continue
+                    platform = detect_platform_from_url(raw_url)
+                    if not is_platform_enabled(platform):
+                        continue
 
-                        if price <= 0 or mrp <= 0 or mrp < price:
-                            continue
+                    discount = round(((mrp - price) / mrp) * 100, 2)
 
-                        platform = detect_platform_from_url(raw_url)
-                        platform_tally[platform] += 1
+                    if discount >= DISCOUNT_THRESHOLD and raw_url:
+                        products.append({
+                            "title": title,
+                            "raw_url": raw_url,
+                            "image": image,
+                            "platform": platform,
+                            "price": price,
+                            "mrp": mrp,
+                            "discount": discount,
+                            "coupon_code": item.get("coupon_code")
+                        })
+    except Exception as e:
+        print(f"❌ Error reading {DEALS_FILE}: {e}", flush=True)
 
-                        if not is_platform_enabled(platform):
-                            continue
-
-                        discount = round(((mrp - price) / mrp) * 100, 2)
-
-                        if discount >= DISCOUNT_THRESHOLD and raw_url:
-                            products.append({
-                                "title": title,
-                                "raw_url": raw_url,
-                                "image": image,
-                                "platform": platform,
-                                "price": price,
-                                "mrp": mrp,
-                                "discount": discount,
-                                "coupon_code": item.get("coupon_code")
-                            })
-                    if products:
-                        break # Stop checking other feeds if active deals are found
-        except Exception as e:
-            print(f"⚠️ Feed error ({feed_url}): {e}", flush=True)
-
-    print("\n--------------------------------------------------")
-    print("📈 PLATFORM BREAKDOWN (Parsed from Product Feeds):")
-    print("--------------------------------------------------")
-    for store, count in platform_tally.most_common(15):
-        print(f"   • {store}: {count} offers")
-    print("--------------------------------------------------\n")
-
-    print(f"📊 Total product items matching >=40% discount criteria: {len(products)}", flush=True)
+    print(f"📊 Total valid product items matching >=40% discount criteria: {len(products)}", flush=True)
     return products
 
 def send_telegram_post(deal: dict):
@@ -322,27 +298,26 @@ def send_telegram_post(deal: dict):
         print(f"⚠️ Failed Telegram post: {e}", flush=True)
 
 def run_deal_pipeline():
-    print("DEBUG: Initializing scraping & affiliate tagging pipeline...", flush=True)
+    print("DEBUG: Initializing local feed & tagging pipeline...", flush=True)
     
     history_count = get_history_count()
     print(f"📁 History Status: {history_count} deal(s) recorded in `posted_deals.txt`.", flush=True)
 
     valid_deals = []
-    raw_products = fetch_scraped_product_deals()
+    raw_products = fetch_local_deals()
 
     for product in raw_products:
         raw_url = product.get("raw_url")
         if not raw_url or already_posted(raw_url):
             continue
         
-        # Apply affiliate tracking tags or conversion
         affiliate_url = apply_affiliate_tag(raw_url)
         product["affiliate_url"] = affiliate_url
         
         valid_deals.append(product)
 
     if not valid_deals:
-        print("\nNo new product/quick-commerce 40%+ deals found in this run.", flush=True)
+        print("\nNo new unposted deals found in `deals.json` matching >=40% discount.", flush=True)
         return
 
     print(f"\nDiscovered {len(valid_deals)} new deal(s). Broadcasting to Telegram...", flush=True)
