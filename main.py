@@ -27,8 +27,8 @@ ENABLED_PLATFORMS = {
     "firstcry": True,
 }
 
-DISCOUNT_THRESHOLD = 40.0  # 🔥 Minimum discount target (40%)
-MAX_PAGES_TO_FETCH = 5     # Fetch across top 5 API pages
+DISCOUNT_THRESHOLD = 40.0  # 🔥 Minimum target discount (40%)
+MAX_PAGES_TO_FETCH = 5     # Scan top pages
 CUELINKS_API_URL = "https://developers.cuelinks.com/pub_api/v3/offers"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -73,42 +73,42 @@ def mark_as_posted(url: str):
     except Exception as e:
         print(f"⚠️ Error writing history: {e}", flush=True)
 
-def extract_platform_name(item: dict) -> str:
-    """Accurately extracts the real e-commerce platform name, avoiding internal aggregator tags."""
-    # 1. First priority: Campaign object details
+def extract_real_platform_name(item: dict) -> str:
+    """Resolves real e-commerce platform name, ignoring intermediary networks like Linksdirect."""
+    # Check all possible platform title keys
+    candidates = [
+        item.get("merchant_name"),
+        item.get("store_name"),
+        item.get("brand"),
+        item.get("merchant"),
+        item.get("store")
+    ]
+    
+    # Check campaign object
     campaign = item.get("campaign")
     if isinstance(campaign, dict):
-        camp_title = campaign.get("name") or campaign.get("title") or campaign.get("domain")
-        if camp_title and isinstance(camp_title, str):
-            clean_camp = camp_title.strip()
-            # Ignore internal networks like Linksdirect
-            if "linksdirect" not in clean_camp.lower():
-                return clean_camp
+        candidates.insert(0, campaign.get("name") or campaign.get("title"))
 
-    # 2. Second priority: Explicit merchant or store fields
-    for field in ["merchant_name", "store_name", "merchant", "store", "brand"]:
-        val = item.get(field)
-        if val and isinstance(val, str) and val.strip():
-            clean_val = val.strip()
-            if "linksdirect" not in clean_val.lower():
-                return clean_val
+    for candidate in candidates:
+        if candidate and isinstance(candidate, str):
+            clean = candidate.strip()
+            # Ignore Linksdirect or proxy aggregator names
+            if "linksdirect" not in clean.lower() and "cuelinks" not in clean.lower():
+                return clean
 
-    # 3. Third priority: Parse clean domain name from target affiliate URL
+    # Fallback: Extract from affiliate tracking URL domain
     target_url = item.get("tracking_url") or item.get("affiliate_url") or item.get("url", "")
     if target_url:
         try:
             domain = urlparse(target_url).netloc.lower()
             domain = re.sub(r'^(www\.|m\.|links\.)', '', domain)
             parts = domain.split('.')
-            if len(parts) >= 2:
-                # E.g. 'myntra.com' -> 'Myntra'
-                store_name = parts[0].capitalize()
-                if "linksdirect" not in store_name.lower():
-                    return store_name
+            if len(parts) >= 2 and "linksdirect" not in parts[0]:
+                return parts[0].capitalize()
         except Exception:
             pass
 
-    return "E-Commerce"
+    return "E-Commerce Store"
 
 def is_platform_enabled(platform_name: str) -> bool:
     if not platform_name:
@@ -119,18 +119,31 @@ def is_platform_enabled(platform_name: str) -> bool:
             return is_enabled
     return True
 
-def extract_discount_percentage(text: str) -> float:
-    """Parses discount percentages from offer title text (e.g., 'Flat 50% OFF')."""
-    if not text:
-        return 0.0
-    matches = re.findall(r'(?:up to|flat|min[imu\s]*um)?\s*(\d{1,2})%', text, re.IGNORECASE)
-    if matches:
-        percentages = [float(p) for p in matches]
-        return max(percentages)
-    return 0.0
+def extract_discount_and_prices(item: dict) -> tuple:
+    """Extracts price, MRP, and discount percentage from numerical tags or text title."""
+    title = item.get("title") or item.get("name") or ""
+    
+    # Try numeric pricing fields
+    try:
+        price = float(item.get("special_price") or item.get("price") or item.get("selling_price") or 0)
+        mrp = float(item.get("mrp") or item.get("value") or item.get("list_price") or price)
+    except (ValueError, TypeError):
+        price, mrp = 0.0, 0.0
+
+    discount = 0.0
+    if mrp > price > 0:
+        discount = round(((mrp - price) / mrp) * 100, 2)
+
+    # Fallback to regex text extraction if numeric price is missing in the campaign feed
+    if discount == 0.0 and title:
+        matches = re.findall(r'(?:up to|flat|min[imu\s]*um)?\s*(\d{1,2})%', title, re.IGNORECASE)
+        if matches:
+            discount = max([float(p) for p in matches])
+
+    return price, mrp, discount
 
 def fetch_cuelinks_deals() -> list:
-    """Fetches promotional offer feeds from Cuelinks V3 API."""
+    """Fetches and cleans promotional deals from Cuelinks V3 API."""
     api_key = os.getenv("CUELINKS_API_KEY")
     if not api_key:
         print("❌ CRITICAL ERROR: CUELINKS_API_KEY secret is missing!", flush=True)
@@ -164,11 +177,11 @@ def fetch_cuelinks_deals() -> list:
                 image = item.get("image_url") or item.get("image", "")
                 
                 # Extract clean platform name
-                platform = extract_platform_name(item)
+                platform = extract_real_platform_name(item)
                 if not is_platform_enabled(platform):
                     continue
 
-                # Extract Coupon Code if available
+                # Extract Coupon Code
                 coupon_code = (
                     item.get("coupon_code") or 
                     item.get("code") or 
@@ -178,8 +191,7 @@ def fetch_cuelinks_deals() -> list:
                 if coupon_code and str(coupon_code).strip().lower() in ["none", "null", "n/a", "no code required"]:
                     coupon_code = None
 
-                # Extract discount percentage from title string
-                discount = extract_discount_percentage(title)
+                price, mrp, discount = extract_discount_and_prices(item)
 
                 if tracking_url and discount >= DISCOUNT_THRESHOLD:
                     products.append({
@@ -187,6 +199,8 @@ def fetch_cuelinks_deals() -> list:
                         "url": tracking_url,
                         "image": image,
                         "platform": platform,
+                        "price": price,
+                        "mrp": mrp,
                         "discount": discount,
                         "coupon_code": coupon_code
                     })
@@ -209,19 +223,27 @@ def send_telegram_post(deal: dict):
     title = deal.get("title", "Hot Offer")
     platform = deal.get("platform", "E-Commerce")
     discount = deal.get("discount", 0)
+    price = deal.get("price", 0)
+    mrp = deal.get("mrp", 0)
     url_link = deal.get("url", "")
     image_url = deal.get("image")
     coupon_code = deal.get("coupon_code")
 
+    # Format price section only if valid numeric price exists
+    price_block = ""
+    if price > 0 and mrp > 0:
+        price_block = f"💰 <b>Deal Price:</b> ₹{price:,.2f} (<s>₹{mrp:,.2f}</s>)\n"
+
     # Format coupon section if code exists
-    coupon_block = f"🎟️ <b>Use Promo Code:</b> <code>{coupon_code}</code>\n\n" if coupon_code else ""
+    coupon_block = f"🎟️ <b>Use Promo Code:</b> <code>{coupon_code}</code>\n" if coupon_code else ""
 
     caption = (
         f"🚨 <b>MEGA DEAL ALERT - {int(discount)}% OFF!</b> 🚨\n\n"
         f"📦 <b>{title}</b>\n\n"
         f"🏷️ <b>Platform:</b> {platform}\n"
-        f"{coupon_block}"
-        f"🔗 <a href='{url_link}'>Grab Offer Now</a>"
+        f"{price_block}"
+        f"{coupon_block}\n"
+        f"🔗 <a href='{url_link}'>Grab Best Deal Now</a>"
     )
 
     headers = {"Content-Type": "application/json"}
