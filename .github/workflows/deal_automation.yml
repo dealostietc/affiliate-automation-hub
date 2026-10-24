@@ -15,7 +15,7 @@ jobs:
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-      CUELINKS_API_KEY: ${{ secrets.CUELINKS_API_KEY }}  # <-- Add this line
+      CUELINKS_API_KEY: ${{ secrets.CUELINKS_API_KEY }}
       PYTHONUNBUFFERED: "1"
 
     steps:
@@ -35,6 +35,12 @@ jobs:
       - name: Run Main Script
         run: |
           python main.py
+
+      - name: Pull latest changes before commit
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
 
       - name: Commit and Push Posted Deals History
         uses: stefanzweifel/git-auto-commit-action@v5
