@@ -126,6 +126,35 @@ def is_platform_enabled(platform_name: str) -> bool:
             return is_enabled
     return True
 
+def is_specific_product_deal(title: str) -> bool:
+    """Filters out generic store-wide banners and keeps only product/category-specific offers."""
+    if not title:
+        return False
+    
+    title_lower = title.lower()
+    
+    # 🚫 Negative keywords that indicate broad store-wide sales (to be rejected)
+    generic_blocklist = [
+        "storewide", "site wide", "all orders", "first order", "new user", 
+        "signup", "download app", "gift card", "bank offer", "cashback offer",
+        "all users", "every order", "flat off on everything"
+    ]
+    for word in generic_blocklist:
+        if word in title_lower:
+            return False
+
+    # ✅ Product or category keywords required for a valid deal
+    product_keywords = [
+        "shoe", "sneaker", "boot", "sandal", "shirt", "t-shirt", "jeans", "trouser", 
+        "kurti", "saree", "watch", "headphone", "earbud", "speaker", "mobile", 
+        "phone", "laptop", "tablet", "tv", "television", "refrigerator", "ac", 
+        "washing machine", "bottle", "backpack", "bag", "perfume", "makeup", 
+        "cream", "trimmer", "camera", "bottle", "hoodie", "jacket", "ethnic",
+        "men", "women", "kids", "footwear", "electronics", "appliances", "beauty"
+    ]
+    
+    return any(keyword in title_lower for keyword in product_keywords)
+
 def extract_discount_and_coupon(item: dict) -> tuple:
     """Parses discount percentage from title text and extracts any available coupon code."""
     title = item.get("title") or item.get("name") or ""
@@ -148,7 +177,7 @@ def extract_discount_and_coupon(item: dict) -> tuple:
     return discount, coupon_code
 
 def fetch_cuelinks_deals() -> list:
-    """Fetches and processes live promotional offers from Cuelinks V3 API."""
+    """Fetches and processes live product-focused promotional offers from Cuelinks V3 API."""
     api_key = os.getenv("CUELINKS_API_KEY")
     if not api_key:
         print("❌ CRITICAL ERROR: CUELINKS_API_KEY secret is missing!", flush=True)
@@ -189,6 +218,10 @@ def fetch_cuelinks_deals() -> list:
                 if not is_platform_enabled(platform):
                     continue
 
+                # Filter out generic site-wide banners, keep only specific product deals
+                if not is_specific_product_deal(title):
+                    continue
+
                 discount, coupon_code = extract_discount_and_coupon(item)
 
                 if tracking_url and discount >= DISCOUNT_THRESHOLD:
@@ -213,7 +246,7 @@ def fetch_cuelinks_deals() -> list:
         print(f"   • {store}: {count} offers")
     print("--------------------------------------------------\n")
 
-    print(f"📊 Total high-discount offers matched (>=40%): {len(products)}", flush=True)
+    print(f"📊 Total product-specific high-discount offers matched (>=40%): {len(products)}", flush=True)
     return products
 
 def send_telegram_post(deal: dict):
@@ -234,7 +267,7 @@ def send_telegram_post(deal: dict):
     coupon_block = f"🎟️ <b>Use Promo Code:</b> <code>{coupon_code}</code>\n" if coupon_code else ""
 
     caption = (
-        f"🚨 <b>MEGA DEAL ALERT - {int(discount)}% OFF!</b> 🚨\n\n"
+        f"🚨 <b>PRODUCT DEAL - {int(discount)}% OFF!</b> 🚨\n\n"
         f"📦 <b>{title}</b>\n\n"
         f"🏷️ <b>Platform:</b> {platform}\n"
         f"{coupon_block}\n"
@@ -282,7 +315,7 @@ def run_deal_pipeline():
         valid_deals.append(product)
 
     if not valid_deals:
-        print("\nNo new matching 40%+ discount offers found in this run.", flush=True)
+        print("\nNo new matching product-specific 40%+ discount offers found in this run.", flush=True)
         return
 
     print(f"\nDiscovered {len(valid_deals)} new offer(s). Broadcasting to Telegram...", flush=True)
