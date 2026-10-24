@@ -9,7 +9,7 @@ from core.price_tracker import DIYPriceTracker
 
 # Configuration
 DISCOUNT_THRESHOLD = 40.0  # 🔥 40% and above heavy discount threshold
-CUELINKS_API_URL = "https://developers.cuelinks.com/pub_api/v3/offers"  # Updated V3 Endpoint
+CUELINKS_API_URL = "https://developers.cuelinks.com/pub_api/v3/offers"
 
 # Use an absolute path based on this script's directory so history persists correctly
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,22 +20,18 @@ def get_canonical_deal_id(url: str) -> str:
     if not url:
         return ""
     
-    # 1. Amazon ASIN extraction
     asin_match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url)
     if asin_match:
         return f"amazon_{asin_match.group(1)}"
 
-    # 2. Ajio Product ID extraction
     ajio_match = re.search(r'/p/([a-zA-Z0-9_]+)', url)
     if ajio_match:
         return f"ajio_{ajio_match.group(1)}"
 
-    # 3. Myntra Product ID extraction
     myntra_match = re.search(r'myntra\.com/(?:[^/]+/)?(\d+)', url)
     if myntra_match:
         return f"myntra_{myntra_match.group(1)}"
 
-    # Fallback: Strip query parameters, fragments, and trailing slashes
     try:
         parsed = urlparse(url)
         clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
@@ -93,7 +89,7 @@ def fetch_cuelinks_deals() -> list:
         return []
 
     headers = {
-        "Authorization": f"Token token={api_key}",
+        "Authorization": f"Token {api_key}",
         "Content-Type": "application/json"
     }
 
@@ -107,7 +103,6 @@ def fetch_cuelinks_deals() -> list:
             return []
 
         data = response.json()
-        # Handle standard V3 JSON envelope structures ('data' or direct list)
         deals_list = data.get("data", data) if isinstance(data, dict) else data
 
         if not isinstance(deals_list, list):
