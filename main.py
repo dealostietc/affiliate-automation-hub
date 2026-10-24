@@ -82,7 +82,7 @@ def mark_as_posted(url: str):
         print(f"⚠️ Error writing to history file: {e}", flush=True)
 
 def fetch_cuelinks_deals() -> list:
-    """Fetches live curated deal feeds from the Cuelinks V3 API."""
+    """Fetches live curated deal feeds from the Cuelinks V3 API with robust key fallbacks."""
     api_key = os.getenv("CUELINKS_API_KEY")
     if not api_key:
         print("❌ CRITICAL ERROR: CUELINKS_API_KEY secret is missing!", flush=True)
@@ -118,8 +118,10 @@ def fetch_cuelinks_deals() -> list:
             platform = item.get("merchant") or item.get("store", "E-Commerce")
             
             try:
-                price = float(item.get("special_price") or item.get("price", 0))
-                mrp = float(item.get("mrp") or item.get("value", price))
+                # Support multiple naming conventions across Cuelinks V3 endpoints
+                price = float(item.get("special_price") or item.get("price") or item.get("selling_price", 0))
+                mrp = float(item.get("mrp") or item.get("value") or item.get("original_price", price))
+                api_discount = float(item.get("discount") or 0.0)
             except (ValueError, TypeError):
                 continue
 
@@ -130,7 +132,8 @@ def fetch_cuelinks_deals() -> list:
                     "image": image,
                     "platform": platform,
                     "price": price,
-                    "mrp": mrp
+                    "mrp": mrp,
+                    "api_discount": api_discount
                 })
 
     except Exception as e:
@@ -211,14 +214,18 @@ def run_deal_pipeline():
 
     for product in extracted_products:
         url = product.get("url")
-        if not url or already_posted(url):
-            continue
-
         price = float(product.get("price", 0))
         mrp = float(product.get("mrp", price))
-        discount = 0.0
-        if mrp > price > 0:
+        
+        # Calculate discount or fall back to API's provided discount
+        discount = product.get("api_discount", 0.0)
+        if discount <= 0 and mrp > price > 0:
             discount = round(((mrp - price) / mrp) * 100, 2)
+
+        print(f"DEBUG Check: [{discount}% off] ₹{price} (MRP: ₹{mrp}) - {product.get('title')[:35]}...", flush=True)
+
+        if not url or already_posted(url):
+            continue
 
         if discount >= DISCOUNT_THRESHOLD:
             product["discount"] = discount
