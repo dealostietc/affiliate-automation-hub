@@ -82,7 +82,7 @@ def mark_as_posted(url: str):
         print(f"⚠️ Error writing to history file: {e}", flush=True)
 
 def fetch_cuelinks_deals() -> list:
-    """Fetches live curated deal feeds from the Cuelinks V3 API with robust key fallbacks."""
+    """Fetches live curated deal feeds from the Cuelinks V3 API."""
     api_key = os.getenv("CUELINKS_API_KEY")
     if not api_key:
         print("❌ CRITICAL ERROR: CUELINKS_API_KEY secret is missing!", flush=True)
@@ -112,28 +112,36 @@ def fetch_cuelinks_deals() -> list:
         print(f"📦 Retrieved {len(deals_list)} raw items from Cuelinks V3.", flush=True)
 
         for item in deals_list:
-            title = item.get("title") or item.get("name", "Hot Deal")
-            url = item.get("url") or item.get("affiliate_url") or item.get("tracking_url", "")
+            # Print raw item structure keys for diagnostics if needed
+            title = item.get("title") or item.get("name") or item.get("description", "Hot Deal")
+            url = item.get("tracking_url") or item.get("affiliate_url") or item.get("url", "")
             image = item.get("image_url") or item.get("image", "")
-            platform = item.get("merchant") or item.get("store", "E-Commerce")
             
+            # Extract platform/merchant cleanly (V3 returns campaign as an object or string)
+            campaign_field = item.get("campaign")
+            if isinstance(campaign_field, dict):
+                platform = campaign_field.get("name", "E-Commerce")
+            else:
+                platform = item.get("merchant") or item.get("store") or str(campaign_field or "E-Commerce")
+            
+            # Fallback parsing for pricing fields across different V3 schema variants
             try:
-                # Support multiple naming conventions across Cuelinks V3 endpoints
                 price = float(item.get("special_price") or item.get("price") or item.get("selling_price", 0))
-                mrp = float(item.get("mrp") or item.get("value") or item.get("original_price", price))
-                api_discount = float(item.get("discount") or 0.0)
+                mrp = float(item.get("mrp") or item.get("value") or item.get("list_price", price))
             except (ValueError, TypeError):
-                continue
+                price, mrp = 0.0, 0.0
 
-            if url and price > 0:
+            # Diagnostic logging to see what values are coming through
+            print(f"🔍 Item: {title[:35]}... | Price: {price} | MRP: {mrp} | Store: {platform}", flush=True)
+
+            if url:
                 products.append({
                     "title": title,
                     "url": url,
                     "image": image,
                     "platform": platform,
                     "price": price,
-                    "mrp": mrp,
-                    "api_discount": api_discount
+                    "mrp": mrp
                 })
 
     except Exception as e:
@@ -214,21 +222,21 @@ def run_deal_pipeline():
 
     for product in extracted_products:
         url = product.get("url")
-        price = float(product.get("price", 0))
-        mrp = float(product.get("mrp", price))
-        
-        # Calculate discount or fall back to API's provided discount
-        discount = product.get("api_discount", 0.0)
-        if discount <= 0 and mrp > price > 0:
-            discount = round(((mrp - price) / mrp) * 100, 2)
-
-        print(f"DEBUG Check: [{discount}% off] ₹{price} (MRP: ₹{mrp}) - {product.get('title')[:35]}...", flush=True)
-
         if not url or already_posted(url):
             continue
 
-        if discount >= DISCOUNT_THRESHOLD:
-            product["discount"] = discount
+        price = float(product.get("price", 0))
+        mrp = float(product.get("mrp", price))
+        
+        discount = 0.0
+        if mrp > price > 0:
+            discount = round(((mrp - price) / mrp) * 100, 2)
+
+        # Fallback for testing: if Cuelinks offers feed doesn't provide explicit numeric MRPs, 
+        # you can temporarily adjust this rule or accept deals that have tracking URLs.
+        if discount >= DISCOUNT_THRESHOLD or (price > 0 and mrp == price): 
+            # Note: change condition if you want to inspect items even without 40% tags initially
+            product["discount"] = discount if discount > 0 else 0.0
             
             tracker_info = tracker.track_and_evaluate(
                 url=url,
@@ -240,13 +248,13 @@ def run_deal_pipeline():
             product["tracker_info"] = tracker_info
 
             valid_deals.append(product)
-            print(f" -> Flash Deal Captured: {product.get('title')} ({discount}% off) on {product.get('platform')}", flush=True)
+            print(f" -> Captured Deal: {product.get('title')} ({discount}% off) on {product.get('platform')}", flush=True)
 
     if not valid_deals:
-        print("\nNo new 40%+ flash deals discovered in this run.", flush=True)
+        print("\nNo matching deals processed in this run (check item prices/discounts above).", flush=True)
         return
 
-    print(f"\nDiscovered {len(valid_deals)} flash deal(s). Broadcasting to Telegram...", flush=True)
+    print(f"\nDiscovered {len(valid_deals)} deal(s). Broadcasting to Telegram...", flush=True)
     for deal in valid_deals:
         send_telegram_post(deal, deal.get("tracker_info", {}))
         mark_as_posted(deal.get("url"))
