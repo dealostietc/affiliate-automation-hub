@@ -1,4 +1,4 @@
-print("DEBUG: main.py started successfully!", flush=True)
+print("DEBUG: Product & Quick-Commerce Deal Automation started!", flush=True)
 
 import os
 import re
@@ -7,41 +7,81 @@ from collections import Counter
 from urllib.parse import urlparse
 
 # =========================================================================
-# 🎛️ E-COMMERCE PLATFORM FILTER TOGGLE (Set True to Enable, False to Disable)
+# 🎛️ E-COMMERCE & QUICK-COMMERCE PLATFORM TOGGLES
 # =========================================================================
 ENABLED_PLATFORMS = {
+    # 🛒 Mainstream E-Commerce
     "amazon": True,
     "flipkart": True,
-    "meesho": True,
-    "shopsy": True,
-    "tata cliq": True,
     "myntra": True,
     "ajio": True,
-    "nykaa": True,
-    "shoppers stop": True,
     "croma": True,
-    "vijay sales": True,
+    "meesho": True,
+    "tata cliq": True,
+    "nykaa": True,
     "reliance digital": True,
     "samsung": True,
     "mamaearth": True,
     "firstcry": True,
+
+    # ⚡ Quick-Commerce & Hyperlocal Delivery
+    "zepto": True,
+    "blinkit": True,
+    "zomato": True,
+    "swiggy": True,
+    "instamart": True,
 }
 
 DISCOUNT_THRESHOLD = 40.0  # 🔥 Minimum discount target percentage (40%)
-MAX_PAGES_TO_FETCH = 5     # Scan top API pages
-CUELINKS_API_URL = "https://developers.cuelinks.com/pub_api/v3/offers"
+CONVERT_API_URL = "https://developers.cuelinks.com/pub_api/v3/links/convert"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_FILE = os.path.join(BASE_DIR, "posted_deals.txt")
 
 def get_canonical_deal_id(url: str) -> str:
-    """Extracts clean canonical URLs to prevent duplicate posts."""
+    """Extracts permanent unique product IDs to prevent duplicate posts."""
     if not url:
         return ""
+    
+    url_lower = url.lower()
+
+    # 1. Amazon ASIN
+    amazon_match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url, re.IGNORECASE)
+    if amazon_match:
+        return f"amazon_{amazon_match.group(1)}"
+
+    # 2. Flipkart Product ID
+    fk_match = re.search(r'pid=([A-Z0-9]+)', url, re.IGNORECASE)
+    if fk_match:
+        return f"flipkart_{fk_match.group(1)}"
+
+    # 3. Myntra Item ID
+    myntra_match = re.search(r'myntra\.com/(?:[^/]+/)?(\d+)', url, re.IGNORECASE)
+    if myntra_match:
+        return f"myntra_{myntra_match.group(1)}"
+
+    # 4. Swiggy Instamart / Swiggy Item ID
+    if "swiggy" in url_lower:
+        swiggy_match = re.search(r'/item/([a-zA-Z0-9_\-]+)', url)
+        if swiggy_match:
+            return f"swiggy_{swiggy_match.group(1)}"
+
+    # 5. Blinkit Product ID
+    if "blinkit" in url_lower or "grofers" in url_lower:
+        blinkit_match = re.search(r'/prid/(\d+)', url)
+        if blinkit_match:
+            return f"blinkit_{blinkit_match.group(1)}"
+
+    # 6. Zepto Product ID
+    if "zepto" in url_lower:
+        zepto_match = re.search(r'/p/([a-zA-Z0-9_\-]+)', url)
+        if zepto_match:
+            return f"zepto_{zepto_match.group(1)}"
+
     try:
         parsed = urlparse(url)
-        clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
-        return clean_url
+        clean_path = re.sub(r'/(ref|tag)=[^/]+', '', parsed.path)
+        return f"{parsed.netloc}{clean_path}".rstrip("/")
     except Exception:
         return url.strip()
 
@@ -57,7 +97,7 @@ def get_history_count() -> int:
 
 def already_posted(url: str) -> bool:
     deal_id = get_canonical_deal_id(url)
-    if not os.path.exists(HISTORY_FILE):
+    if not deal_id or not os.path.exists(HISTORY_FILE):
         return False
     with open(HISTORY_FILE, "r") as f:
         posted_ids = set(f.read().splitlines())
@@ -83,39 +123,34 @@ def mark_as_posted(url: str):
     except Exception as e:
         print(f"⚠️ Error writing history: {e}", flush=True)
 
-def extract_real_platform_name(item: dict) -> str:
-    """Resolves the real e-commerce store name, ignoring intermediary networks like Linksdirect."""
-    candidates = [
-        item.get("merchant_name"),
-        item.get("store_name"),
-        item.get("brand"),
-        item.get("merchant"),
-        item.get("store")
-    ]
+def detect_platform_from_url(url: str) -> str:
+    """Accurately identifies e-commerce and quick-commerce store names."""
+    if not url:
+        return "E-Commerce"
     
-    campaign = item.get("campaign")
-    if isinstance(campaign, dict):
-        candidates.insert(0, campaign.get("name") or campaign.get("title"))
+    url_lower = url.lower()
 
-    for candidate in candidates:
-        if candidate and isinstance(candidate, str):
-            clean = candidate.strip()
-            if "linksdirect" not in clean.lower() and "cuelinks" not in clean.lower():
-                return clean
+    if "instamart" in url_lower:
+        return "Swiggy Instamart"
+    elif "swiggy" in url_lower:
+        return "Swiggy"
+    elif "zomato" in url_lower:
+        return "Zomato"
+    elif "zepto" in url_lower or "zeptoconsumer" in url_lower:
+        return "Zepto"
+    elif "blinkit" in url_lower or "grofers" in url_lower:
+        return "Blinkit"
 
-    # Fallback: Extract brand domain name from tracking URL
-    target_url = item.get("tracking_url") or item.get("affiliate_url") or item.get("url", "")
-    if target_url:
-        try:
-            domain = urlparse(target_url).netloc.lower()
-            domain = re.sub(r'^(www\.|m\.|links\.)', '', domain)
-            parts = domain.split('.')
-            if len(parts) >= 2 and "linksdirect" not in parts[0]:
-                return parts[0].capitalize()
-        except Exception:
-            pass
+    try:
+        domain = urlparse(url).netloc.lower()
+        domain = re.sub(r'^(www\.|m\.)', '', domain)
+        parts = domain.split('.')
+        if parts:
+            return parts[0].capitalize()
+    except Exception:
+        pass
 
-    return "E-Commerce Store"
+    return "E-Commerce"
 
 def is_platform_enabled(platform_name: str) -> bool:
     if not platform_name:
@@ -126,127 +161,85 @@ def is_platform_enabled(platform_name: str) -> bool:
             return is_enabled
     return True
 
-def is_specific_product_deal(title: str) -> bool:
-    """Filters out generic store-wide banners and keeps only product/category-specific offers."""
-    if not title:
-        return False
-    
-    title_lower = title.lower()
-    
-    # 🚫 Negative keywords that indicate broad store-wide sales (to be rejected)
-    generic_blocklist = [
-        "storewide", "site wide", "all orders", "first order", "new user", 
-        "signup", "download app", "gift card", "bank offer", "cashback offer",
-        "all users", "every order", "flat off on everything"
-    ]
-    for word in generic_blocklist:
-        if word in title_lower:
-            return False
-
-    # ✅ Product or category keywords required for a valid deal
-    product_keywords = [
-        "shoe", "sneaker", "boot", "sandal", "shirt", "t-shirt", "jeans", "trouser", 
-        "kurti", "saree", "watch", "headphone", "earbud", "speaker", "mobile", 
-        "phone", "laptop", "tablet", "tv", "television", "refrigerator", "ac", 
-        "washing machine", "bottle", "backpack", "bag", "perfume", "makeup", 
-        "cream", "trimmer", "camera", "bottle", "hoodie", "jacket", "ethnic",
-        "men", "women", "kids", "footwear", "electronics", "appliances", "beauty"
-    ]
-    
-    return any(keyword in title_lower for keyword in product_keywords)
-
-def extract_discount_and_coupon(item: dict) -> tuple:
-    """Parses discount percentage from title text and extracts any available coupon code."""
-    title = item.get("title") or item.get("name") or ""
-    
-    discount = 0.0
-    if title:
-        matches = re.findall(r'(?:up to|flat|min[imu\s]*um)?\s*(\d{1,2})%', title, re.IGNORECASE)
-        if matches:
-            discount = max([float(p) for p in matches])
-
-    coupon_code = (
-        item.get("coupon_code") or 
-        item.get("code") or 
-        item.get("voucher_code") or 
-        item.get("promo_code")
-    )
-    if coupon_code and str(coupon_code).strip().lower() in ["none", "null", "n/a", "no code required", ""]:
-        coupon_code = None
-
-    return discount, coupon_code
-
-def fetch_cuelinks_deals() -> list:
-    """Fetches and processes live product-focused promotional offers from Cuelinks V3 API."""
+def convert_url_via_cuelinks(product_url: str) -> str:
+    """Converts a direct product URL into your official Cuelinks affiliate link."""
     api_key = os.getenv("CUELINKS_API_KEY")
     if not api_key:
-        print("❌ CRITICAL ERROR: CUELINKS_API_KEY secret is missing!", flush=True)
-        return []
+        return product_url
 
     headers = {
         "Authorization": f"Token {api_key}",
         "Content-Type": "application/json"
     }
 
+    try:
+        payload = {"url": product_url, "shorten": True}
+        response = requests.post(CONVERT_API_URL, json=payload, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("affiliate_url") or data.get("tracking_url") or data.get("short_url") or product_url
+    except Exception as e:
+        print(f"⚠️ Link conversion warning: {e}", flush=True)
+
+    return product_url
+
+def fetch_product_deals() -> list:
+    """Fetches real SKU-level product deals with explicit prices and MRPs."""
+    print("🌐 Fetching live product & quick-commerce deals...", flush=True)
     products = []
     platform_tally = Counter()
 
-    print(f"🌐 Fetching live promotional offers across {MAX_PAGES_TO_FETCH} pages...", flush=True)
+    feed_url = "https://raw.githubusercontent.com/project-deals/live-feed/main/deals.json"
 
-    for page in range(1, MAX_PAGES_TO_FETCH + 1):
-        try:
-            url = f"{CUELINKS_API_URL}?page={page}&per_page=50"
-            response = requests.get(url, headers=headers, timeout=20)
-            
-            if response.status_code != 200:
-                break
-
-            data = response.json()
-            deals_list = data.get("data", data) if isinstance(data, dict) else data
-
-            if not isinstance(deals_list, list) or not deals_list:
-                break
-
-            for item in deals_list:
-                title = item.get("title") or item.get("name") or item.get("description", "Hot Offer")
-                tracking_url = item.get("tracking_url") or item.get("affiliate_url") or item.get("url", "")
-                image = item.get("image_url") or item.get("image", "")
+    try:
+        res = requests.get(feed_url, timeout=15)
+        if res.status_code == 200:
+            items = res.json()
+            for item in items:
+                title = item.get("title", "Hot Product Deal")
+                raw_url = item.get("url") or item.get("link", "")
+                image = item.get("image", "")
                 
-                platform = extract_real_platform_name(item)
+                try:
+                    price = float(item.get("price", 0))
+                    mrp = float(item.get("mrp", price))
+                except (ValueError, TypeError):
+                    continue
+
+                if price <= 0 or mrp <= 0 or mrp < price:
+                    continue
+
+                platform = detect_platform_from_url(raw_url)
                 platform_tally[platform] += 1
 
                 if not is_platform_enabled(platform):
                     continue
 
-                # Filter out generic site-wide banners, keep only specific product deals
-                if not is_specific_product_deal(title):
-                    continue
+                discount = round(((mrp - price) / mrp) * 100, 2)
 
-                discount, coupon_code = extract_discount_and_coupon(item)
-
-                if tracking_url and discount >= DISCOUNT_THRESHOLD:
+                if discount >= DISCOUNT_THRESHOLD and raw_url:
                     products.append({
                         "title": title,
-                        "url": tracking_url,
+                        "raw_url": raw_url,
                         "image": image,
                         "platform": platform,
+                        "price": price,
+                        "mrp": mrp,
                         "discount": discount,
-                        "coupon_code": coupon_code
+                        "coupon_code": item.get("coupon_code")
                     })
-
-        except Exception as e:
-            print(f"❌ Error fetching page {page}: {e}", flush=True)
-            break
+    except Exception as e:
+        print(f"❌ Error fetching product feed: {e}", flush=True)
 
     # 📊 Diagnostics table for logs
     print("\n--------------------------------------------------")
-    print("📈 E-COMMERCE PLATFORM BREAKDOWN (Parsed from Feed):")
+    print("📈 PLATFORM BREAKDOWN (Parsed from Product Feed):")
     print("--------------------------------------------------")
     for store, count in platform_tally.most_common(15):
         print(f"   • {store}: {count} offers")
     print("--------------------------------------------------\n")
 
-    print(f"📊 Total product-specific high-discount offers matched (>=40%): {len(products)}", flush=True)
+    print(f"📊 Total product items matching >=40% discount criteria: {len(products)}", flush=True)
     return products
 
 def send_telegram_post(deal: dict):
@@ -257,21 +250,24 @@ def send_telegram_post(deal: dict):
         print("⚠️ Telegram credentials missing.", flush=True)
         return
 
-    title = deal.get("title", "Hot Offer")
+    title = deal.get("title", "Hot Product Deal")
     platform = deal.get("platform", "E-Commerce")
+    price = deal.get("price", 0)
+    mrp = deal.get("mrp", 0)
     discount = deal.get("discount", 0)
-    url_link = deal.get("url", "")
+    affiliate_url = deal.get("affiliate_url", "")
     image_url = deal.get("image")
     coupon_code = deal.get("coupon_code")
 
     coupon_block = f"🎟️ <b>Use Promo Code:</b> <code>{coupon_code}</code>\n" if coupon_code else ""
 
     caption = (
-        f"🚨 <b>PRODUCT DEAL - {int(discount)}% OFF!</b> 🚨\n\n"
+        f"🔥 <b>LOOT DEAL - {int(discount)}% OFF!</b> 🔥\n\n"
         f"📦 <b>{title}</b>\n\n"
         f"🏷️ <b>Platform:</b> {platform}\n"
+        f"💰 <b>Deal Price:</b> ₹{price:,.2f} <s>₹{mrp:,.2f}</s>\n"
         f"{coupon_block}\n"
-        f"🔗 <a href='{url_link}'>Grab Best Deal Now</a>"
+        f"🔗 <a href='{affiliate_url}'>👉 Grab Deal Now</a>"
     )
 
     headers = {"Content-Type": "application/json"}
@@ -284,7 +280,7 @@ def send_telegram_post(deal: dict):
                 headers=headers
             ).json()
             if res.get("ok"):
-                print(f"✅ Sent photo alert for [{platform}]: {title[:30]}", flush=True)
+                print(f"✅ Sent photo deal for [{platform}]: {title[:30]}", flush=True)
                 return
         except Exception:
             pass
@@ -295,33 +291,38 @@ def send_telegram_post(deal: dict):
             json={"chat_id": chat_id, "text": caption, "parse_mode": "HTML", "disable_web_page_preview": False},
             headers=headers
         )
-        print(f"✅ Sent text alert for [{platform}]: {title[:30]}", flush=True)
+        print(f"✅ Sent text deal for [{platform}]: {title[:30]}", flush=True)
     except Exception as e:
-        print(f"⚠️ Failed text post: {e}", flush=True)
+        print(f"⚠️ Failed Telegram post: {e}", flush=True)
 
 def run_deal_pipeline():
-    print("DEBUG: Initializing deal collection pipeline...", flush=True)
+    print("DEBUG: Initializing product deal pipeline...", flush=True)
     
     history_count = get_history_count()
-    print(f"📁 History Status: {history_count} deal(s) currently recorded in `posted_deals.txt`.", flush=True)
+    print(f"📁 History Status: {history_count} deal(s) recorded in `posted_deals.txt`.", flush=True)
 
     valid_deals = []
-    extracted_products = fetch_cuelinks_deals()
+    raw_products = fetch_product_deals()
 
-    for product in extracted_products:
-        url = product.get("url")
-        if not url or already_posted(url):
+    for product in raw_products:
+        raw_url = product.get("raw_url")
+        if not raw_url or already_posted(raw_url):
             continue
+        
+        # Convert direct product link into Cuelinks affiliate link
+        affiliate_url = convert_url_via_cuelinks(raw_url)
+        product["affiliate_url"] = affiliate_url
+        
         valid_deals.append(product)
 
     if not valid_deals:
-        print("\nNo new matching product-specific 40%+ discount offers found in this run.", flush=True)
+        print("\nNo new product/quick-commerce 40%+ deals found in this run.", flush=True)
         return
 
-    print(f"\nDiscovered {len(valid_deals)} new offer(s). Broadcasting to Telegram...", flush=True)
+    print(f"\nDiscovered {len(valid_deals)} new deal(s). Broadcasting to Telegram...", flush=True)
     for deal in valid_deals:
         send_telegram_post(deal)
-        mark_as_posted(deal.get("url"))
+        mark_as_posted(deal.get("raw_url"))
 
 if __name__ == "__main__":
     run_deal_pipeline()
