@@ -9,7 +9,7 @@ from core.price_tracker import DIYPriceTracker
 
 # Configuration
 DISCOUNT_THRESHOLD = 40.0  # 🔥 40% and above heavy discount threshold
-CUELINKS_API_URL = "https://www.cue-links.com/api/v2/deals.json"
+CUELINKS_API_URL = "https://developers.cuelinks.com/pub_api/v3/offers"  # Updated V3 Endpoint
 
 # Use an absolute path based on this script's directory so history persists correctly
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -86,7 +86,7 @@ def mark_as_posted(url: str):
         print(f"⚠️ Error writing to history file: {e}", flush=True)
 
 def fetch_cuelinks_deals() -> list:
-    """Fetches live curated deal feeds from the Cuelinks API."""
+    """Fetches live curated deal feeds from the Cuelinks V3 API."""
     api_key = os.getenv("CUELINKS_API_KEY")
     if not api_key:
         print("❌ CRITICAL ERROR: CUELINKS_API_KEY secret is missing!", flush=True)
@@ -98,7 +98,7 @@ def fetch_cuelinks_deals() -> list:
     }
 
     products = []
-    print("🌐 Fetching live deal feed from Cuelinks API...", flush=True)
+    print("🌐 Fetching live deal feed from Cuelinks V3 API...", flush=True)
 
     try:
         response = requests.get(CUELINKS_API_URL, headers=headers, timeout=30)
@@ -107,19 +107,18 @@ def fetch_cuelinks_deals() -> list:
             return []
 
         data = response.json()
-        # Cuelinks API typically returns deals under a 'deals' or root list structure
-        deals_list = data.get("deals", data) if isinstance(data, dict) else data
+        # Handle standard V3 JSON envelope structures ('data' or direct list)
+        deals_list = data.get("data", data) if isinstance(data, dict) else data
 
         if not isinstance(deals_list, list):
             print(f"⚠️ Unexpected Cuelinks API response format: {data}", flush=True)
             return []
 
-        print(f"📦 Retrieved {len(deals_list)} raw deals from Cuelinks.", flush=True)
+        print(f"📦 Retrieved {len(deals_list)} raw items from Cuelinks V3.", flush=True)
 
         for item in deals_list:
-            # Map Cuelinks JSON fields to your pipeline schema
             title = item.get("title") or item.get("name", "Hot Deal")
-            url = item.get("url") or item.get("affiliate_url", "")
+            url = item.get("url") or item.get("affiliate_url") or item.get("tracking_url", "")
             image = item.get("image_url") or item.get("image", "")
             platform = item.get("merchant") or item.get("store", "E-Commerce")
             
@@ -140,7 +139,7 @@ def fetch_cuelinks_deals() -> list:
                 })
 
     except Exception as e:
-        print(f"❌ Error communicating with Cuelinks API: {e}", flush=True)
+        print(f"❌ Error communicating with Cuelinks V3 API: {e}", flush=True)
 
     return products
 
@@ -190,7 +189,6 @@ def send_telegram_post(deal: dict, tracker_info: dict):
         except Exception as e:
             print(f"⚠️ Failed to send photo message: {e}", flush=True)
 
-    # Fallback to text message
     try:
         res = requests.post(
             f"https://api.telegram.org/bot{bot_token}/sendMessage",
@@ -207,14 +205,14 @@ def send_telegram_post(deal: dict, tracker_info: dict):
 def run_deal_pipeline():
     print("DEBUG: Initializing price tracker...", flush=True)
     try:
-        tracker = DIYPriceTracker()  # Initialized with SQLite database
+        tracker = DIYPriceTracker()
         print("DEBUG: Price tracker initialized successfully.", flush=True)
     except Exception as e:
         print(f"❌ CRITICAL ERROR during tracker initialization: {e}", flush=True)
         return
 
     valid_deals = []
-    extracted_products = fetcher_deals = fetch_cuelinks_deals()
+    extracted_products = fetch_cuelinks_deals()
 
     for product in extracted_products:
         url = product.get("url")
