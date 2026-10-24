@@ -2,7 +2,6 @@ print("DEBUG: main.py started successfully!", flush=True)
 
 import os
 import re
-import datetime
 import requests
 from collections import Counter
 from urllib.parse import urlparse
@@ -28,8 +27,8 @@ ENABLED_PLATFORMS = {
     "firstcry": True,
 }
 
-DISCOUNT_THRESHOLD = 40.0  # 🔥 Minimum target discount (40%)
-MAX_PAGES_TO_FETCH = 5     # Scan top pages
+DISCOUNT_THRESHOLD = 40.0  # 🔥 Minimum discount target percentage (40%)
+MAX_PAGES_TO_FETCH = 5     # Scan top API pages
 CUELINKS_API_URL = "https://developers.cuelinks.com/pub_api/v3/offers"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -52,8 +51,7 @@ def get_history_count() -> int:
         return 0
     try:
         with open(HISTORY_FILE, "r") as f:
-            lines = [line.strip() for line in f.read().splitlines() if line.strip()]
-            return len(lines)
+            return len([line.strip() for line in f.read().splitlines() if line.strip()])
     except Exception:
         return 0
 
@@ -86,7 +84,7 @@ def mark_as_posted(url: str):
         print(f"⚠️ Error writing history: {e}", flush=True)
 
 def extract_real_platform_name(item: dict) -> str:
-    """Resolves real e-commerce platform name, ignoring intermediary networks like Linksdirect."""
+    """Resolves the real e-commerce store name, ignoring intermediary networks like Linksdirect."""
     candidates = [
         item.get("merchant_name"),
         item.get("store_name"),
@@ -105,6 +103,7 @@ def extract_real_platform_name(item: dict) -> str:
             if "linksdirect" not in clean.lower() and "cuelinks" not in clean.lower():
                 return clean
 
+    # Fallback: Extract brand domain name from tracking URL
     target_url = item.get("tracking_url") or item.get("affiliate_url") or item.get("url", "")
     if target_url:
         try:
@@ -127,29 +126,29 @@ def is_platform_enabled(platform_name: str) -> bool:
             return is_enabled
     return True
 
-def extract_discount_and_prices(item: dict) -> tuple:
-    """Extracts price, MRP, and discount percentage from numerical tags or text title."""
+def extract_discount_and_coupon(item: dict) -> tuple:
+    """Parses discount percentage from title text and extracts any available coupon code."""
     title = item.get("title") or item.get("name") or ""
     
-    try:
-        price = float(item.get("special_price") or item.get("price") or item.get("selling_price") or 0)
-        mrp = float(item.get("mrp") or item.get("value") or item.get("list_price") or price)
-    except (ValueError, TypeError):
-        price, mrp = 0.0, 0.0
-
     discount = 0.0
-    if mrp > price > 0:
-        discount = round(((mrp - price) / mrp) * 100, 2)
-
-    if discount == 0.0 and title:
+    if title:
         matches = re.findall(r'(?:up to|flat|min[imu\s]*um)?\s*(\d{1,2})%', title, re.IGNORECASE)
         if matches:
             discount = max([float(p) for p in matches])
 
-    return price, mrp, discount
+    coupon_code = (
+        item.get("coupon_code") or 
+        item.get("code") or 
+        item.get("voucher_code") or 
+        item.get("promo_code")
+    )
+    if coupon_code and str(coupon_code).strip().lower() in ["none", "null", "n/a", "no code required", ""]:
+        coupon_code = None
+
+    return discount, coupon_code
 
 def fetch_cuelinks_deals() -> list:
-    """Fetches and cleans promotional deals from Cuelinks V3 API."""
+    """Fetches and processes live promotional offers from Cuelinks V3 API."""
     api_key = os.getenv("CUELINKS_API_KEY")
     if not api_key:
         print("❌ CRITICAL ERROR: CUELINKS_API_KEY secret is missing!", flush=True)
@@ -190,16 +189,7 @@ def fetch_cuelinks_deals() -> list:
                 if not is_platform_enabled(platform):
                     continue
 
-                coupon_code = (
-                    item.get("coupon_code") or 
-                    item.get("code") or 
-                    item.get("voucher_code") or 
-                    item.get("promo_code")
-                )
-                if coupon_code and str(coupon_code).strip().lower() in ["none", "null", "n/a", "no code required"]:
-                    coupon_code = None
-
-                price, mrp, discount = extract_discount_and_prices(item)
+                discount, coupon_code = extract_discount_and_coupon(item)
 
                 if tracking_url and discount >= DISCOUNT_THRESHOLD:
                     products.append({
@@ -207,8 +197,6 @@ def fetch_cuelinks_deals() -> list:
                         "url": tracking_url,
                         "image": image,
                         "platform": platform,
-                        "price": price,
-                        "mrp": mrp,
                         "discount": discount,
                         "coupon_code": coupon_code
                     })
@@ -217,7 +205,7 @@ def fetch_cuelinks_deals() -> list:
             print(f"❌ Error fetching page {page}: {e}", flush=True)
             break
 
-    # 📊 Print breakdown of platforms discovered in this run
+    # 📊 Diagnostics table for logs
     print("\n--------------------------------------------------")
     print("📈 E-COMMERCE PLATFORM BREAKDOWN (Parsed from Feed):")
     print("--------------------------------------------------")
@@ -239,15 +227,9 @@ def send_telegram_post(deal: dict):
     title = deal.get("title", "Hot Offer")
     platform = deal.get("platform", "E-Commerce")
     discount = deal.get("discount", 0)
-    price = deal.get("price", 0)
-    mrp = deal.get("mrp", 0)
     url_link = deal.get("url", "")
     image_url = deal.get("image")
     coupon_code = deal.get("coupon_code")
-
-    price_block = ""
-    if price > 0 and mrp > 0:
-        price_block = f"💰 <b>Deal Price:</b> ₹{price:,.2f} (<s>₹{mrp:,.2f}</s>)\n"
 
     coupon_block = f"🎟️ <b>Use Promo Code:</b> <code>{coupon_code}</code>\n" if coupon_code else ""
 
@@ -255,7 +237,6 @@ def send_telegram_post(deal: dict):
         f"🚨 <b>MEGA DEAL ALERT - {int(discount)}% OFF!</b> 🚨\n\n"
         f"📦 <b>{title}</b>\n\n"
         f"🏷️ <b>Platform:</b> {platform}\n"
-        f"{price_block}"
         f"{coupon_block}\n"
         f"🔗 <a href='{url_link}'>Grab Best Deal Now</a>"
     )
@@ -288,7 +269,6 @@ def send_telegram_post(deal: dict):
 def run_deal_pipeline():
     print("DEBUG: Initializing deal collection pipeline...", flush=True)
     
-    # Check history count
     history_count = get_history_count()
     print(f"📁 History Status: {history_count} deal(s) currently recorded in `posted_deals.txt`.", flush=True)
 
@@ -302,7 +282,7 @@ def run_deal_pipeline():
         valid_deals.append(product)
 
     if not valid_deals:
-        print("\nNo new matching 40%+ discount offers found in this run (all matched items were either filtered out or already exist in history).", flush=True)
+        print("\nNo new matching 40%+ discount offers found in this run.", flush=True)
         return
 
     print(f"\nDiscovered {len(valid_deals)} new offer(s). Broadcasting to Telegram...", flush=True)
