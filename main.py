@@ -4,6 +4,7 @@ import os
 import re
 import datetime
 import requests
+from collections import Counter
 from urllib.parse import urlparse
 
 # =========================================================================
@@ -45,6 +46,17 @@ def get_canonical_deal_id(url: str) -> str:
     except Exception:
         return url.strip()
 
+def get_history_count() -> int:
+    """Returns the total number of unique deals already recorded in history."""
+    if not os.path.exists(HISTORY_FILE):
+        return 0
+    try:
+        with open(HISTORY_FILE, "r") as f:
+            lines = [line.strip() for line in f.read().splitlines() if line.strip()]
+            return len(lines)
+    except Exception:
+        return 0
+
 def already_posted(url: str) -> bool:
     deal_id = get_canonical_deal_id(url)
     if not os.path.exists(HISTORY_FILE):
@@ -75,7 +87,6 @@ def mark_as_posted(url: str):
 
 def extract_real_platform_name(item: dict) -> str:
     """Resolves real e-commerce platform name, ignoring intermediary networks like Linksdirect."""
-    # Check all possible platform title keys
     candidates = [
         item.get("merchant_name"),
         item.get("store_name"),
@@ -84,7 +95,6 @@ def extract_real_platform_name(item: dict) -> str:
         item.get("store")
     ]
     
-    # Check campaign object
     campaign = item.get("campaign")
     if isinstance(campaign, dict):
         candidates.insert(0, campaign.get("name") or campaign.get("title"))
@@ -92,11 +102,9 @@ def extract_real_platform_name(item: dict) -> str:
     for candidate in candidates:
         if candidate and isinstance(candidate, str):
             clean = candidate.strip()
-            # Ignore Linksdirect or proxy aggregator names
             if "linksdirect" not in clean.lower() and "cuelinks" not in clean.lower():
                 return clean
 
-    # Fallback: Extract from affiliate tracking URL domain
     target_url = item.get("tracking_url") or item.get("affiliate_url") or item.get("url", "")
     if target_url:
         try:
@@ -123,7 +131,6 @@ def extract_discount_and_prices(item: dict) -> tuple:
     """Extracts price, MRP, and discount percentage from numerical tags or text title."""
     title = item.get("title") or item.get("name") or ""
     
-    # Try numeric pricing fields
     try:
         price = float(item.get("special_price") or item.get("price") or item.get("selling_price") or 0)
         mrp = float(item.get("mrp") or item.get("value") or item.get("list_price") or price)
@@ -134,7 +141,6 @@ def extract_discount_and_prices(item: dict) -> tuple:
     if mrp > price > 0:
         discount = round(((mrp - price) / mrp) * 100, 2)
 
-    # Fallback to regex text extraction if numeric price is missing in the campaign feed
     if discount == 0.0 and title:
         matches = re.findall(r'(?:up to|flat|min[imu\s]*um)?\s*(\d{1,2})%', title, re.IGNORECASE)
         if matches:
@@ -155,6 +161,8 @@ def fetch_cuelinks_deals() -> list:
     }
 
     products = []
+    platform_tally = Counter()
+
     print(f"🌐 Fetching live promotional offers across {MAX_PAGES_TO_FETCH} pages...", flush=True)
 
     for page in range(1, MAX_PAGES_TO_FETCH + 1):
@@ -176,12 +184,12 @@ def fetch_cuelinks_deals() -> list:
                 tracking_url = item.get("tracking_url") or item.get("affiliate_url") or item.get("url", "")
                 image = item.get("image_url") or item.get("image", "")
                 
-                # Extract clean platform name
                 platform = extract_real_platform_name(item)
+                platform_tally[platform] += 1
+
                 if not is_platform_enabled(platform):
                     continue
 
-                # Extract Coupon Code
                 coupon_code = (
                     item.get("coupon_code") or 
                     item.get("code") or 
@@ -209,7 +217,15 @@ def fetch_cuelinks_deals() -> list:
             print(f"❌ Error fetching page {page}: {e}", flush=True)
             break
 
-    print(f"📊 Total high-discount offers matched: {len(products)}", flush=True)
+    # 📊 Print breakdown of platforms discovered in this run
+    print("\n--------------------------------------------------")
+    print("📈 E-COMMERCE PLATFORM BREAKDOWN (Parsed from Feed):")
+    print("--------------------------------------------------")
+    for store, count in platform_tally.most_common(15):
+        print(f"   • {store}: {count} offers")
+    print("--------------------------------------------------\n")
+
+    print(f"📊 Total high-discount offers matched (>=40%): {len(products)}", flush=True)
     return products
 
 def send_telegram_post(deal: dict):
@@ -229,12 +245,10 @@ def send_telegram_post(deal: dict):
     image_url = deal.get("image")
     coupon_code = deal.get("coupon_code")
 
-    # Format price section only if valid numeric price exists
     price_block = ""
     if price > 0 and mrp > 0:
         price_block = f"💰 <b>Deal Price:</b> ₹{price:,.2f} (<s>₹{mrp:,.2f}</s>)\n"
 
-    # Format coupon section if code exists
     coupon_block = f"🎟️ <b>Use Promo Code:</b> <code>{coupon_code}</code>\n" if coupon_code else ""
 
     caption = (
@@ -273,6 +287,11 @@ def send_telegram_post(deal: dict):
 
 def run_deal_pipeline():
     print("DEBUG: Initializing deal collection pipeline...", flush=True)
+    
+    # Check history count
+    history_count = get_history_count()
+    print(f"📁 History Status: {history_count} deal(s) currently recorded in `posted_deals.txt`.", flush=True)
+
     valid_deals = []
     extracted_products = fetch_cuelinks_deals()
 
@@ -283,7 +302,7 @@ def run_deal_pipeline():
         valid_deals.append(product)
 
     if not valid_deals:
-        print("\nNo new matching 40%+ discount offers found in this run.", flush=True)
+        print("\nNo new matching 40%+ discount offers found in this run (all matched items were either filtered out or already exist in history).", flush=True)
         return
 
     print(f"\nDiscovered {len(valid_deals)} new offer(s). Broadcasting to Telegram...", flush=True)
