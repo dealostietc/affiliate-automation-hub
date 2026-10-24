@@ -1,0 +1,18 @@
+[
+  {
+    "title": "Example Running Sports Shoes for Men",
+    "url": "https://www.myntra.com/shoes/nike/nike-men-sports-shoes/12345678/buy",
+    "price": 1199,
+    "mrp": 2999,
+    "image": "https://assets.myntassets.com/h_720,q_90,w_540/v1/assets/images/sample.jpg",
+    "coupon_code": "NIKE40"
+  },
+  {
+    "title": "Example Wireless Bluetooth Earbuds with ANC",
+    "url": "https://www.amazon.dp/B0CX58N3PD",
+    "price": 899,
+    "mrp": 2499,
+    "image": "https://m.media-amazon.com/images/I/61サンプル.jpg",
+    "coupon_code": null
+  }
+]
