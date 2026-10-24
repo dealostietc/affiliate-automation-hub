@@ -5,39 +5,13 @@ import re
 import datetime
 import requests
 from urllib.parse import urlparse
-from core.scrapers.multi_ecom_scraper import MultiEcomFetcher
 from core.price_tracker import DIYPriceTracker
 
-# Targeted High-Urgency Feeds: Flash Deals, Deals of the Day, and Promotional Hubs
-FLASH_DEAL_SOURCES = [
-    # Amazon
-    ("https://www.amazon.in/gp/goldbox", "Amazon", "url"),
-    
-    # Croma
-    ("https://www.croma.com/deal-of-the-day", "Croma", "url"),
-    ("https://www.croma.com/offers", "Croma", "url"),
-    
-    # Myntra
-    ("https://www.myntra.com/shop/sale", "Myntra", "url"),
-    ("https://www.myntra.com/myntra-fashion-store?f=Discount%20Range%3A50.0_100.0", "Myntra", "url"),
-    
-    # Ajio
-    ("https://www.ajio.com/c/83", "Ajio", "url"),
-    ("https://www.ajio.com/s/flash-deals", "Ajio", "url"),
-    
-    # Meesho
-    ("https://www.meesho.com/blockbuster-deals/pl/3tp", "Meesho", "url"),
-    
-    # Shopsy
-    ("https://www.shopsy.in/search?q=deal%20of%20the%20day", "Shopsy", "url"),
-    
-    # Mamaearth
-    ("https://mamaearth.in/offers", "Mamaearth", "url")
-]
-
+# Configuration
 DISCOUNT_THRESHOLD = 40.0  # 🔥 40% and above heavy discount threshold
+CUELINKS_API_URL = "https://www.cue-links.com/api/v2/deals.json"
 
-# Use an absolute path based on this script's directory so the file is always created in the right place
+# Use an absolute path based on this script's directory so history persists correctly
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_FILE = os.path.join(BASE_DIR, "posted_deals.txt")
 
@@ -46,12 +20,12 @@ def get_canonical_deal_id(url: str) -> str:
     if not url:
         return ""
     
-    # 1. Amazon ASIN extraction (e.g., /dp/B08N5WRWNW or /gp/product/B08N5WRWNW)
+    # 1. Amazon ASIN extraction
     asin_match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url)
     if asin_match:
         return f"amazon_{asin_match.group(1)}"
 
-    # 2. Ajio Product ID extraction (e.g., /p/460123456_blue)
+    # 2. Ajio Product ID extraction
     ajio_match = re.search(r'/p/([a-zA-Z0-9_]+)', url)
     if ajio_match:
         return f"ajio_{ajio_match.group(1)}"
@@ -90,7 +64,6 @@ def mark_as_posted(url: str):
         
     posted_ids = set()
     
-    # Ensure file exists or create it explicitly
     if not os.path.exists(HISTORY_FILE):
         print(f"📁 Initializing history file at: {HISTORY_FILE}", flush=True)
         with open(HISTORY_FILE, "w") as f:
@@ -111,6 +84,65 @@ def mark_as_posted(url: str):
         print(f"📝 Successfully saved deal ID [{deal_id}] to history.", flush=True)
     except Exception as e:
         print(f"⚠️ Error writing to history file: {e}", flush=True)
+
+def fetch_cuelinks_deals() -> list:
+    """Fetches live curated deal feeds from the Cuelinks API."""
+    api_key = os.getenv("CUELINKS_API_KEY")
+    if not api_key:
+        print("❌ CRITICAL ERROR: CUELINKS_API_KEY secret is missing!", flush=True)
+        return []
+
+    headers = {
+        "Authorization": f"Token token={api_key}",
+        "Content-Type": "application/json"
+    }
+
+    products = []
+    print("🌐 Fetching live deal feed from Cuelinks API...", flush=True)
+
+    try:
+        response = requests.get(CUELINKS_API_URL, headers=headers, timeout=30)
+        if response.status_code != 200:
+            print(f"⚠️ Cuelinks API returned status code {response.status_code}: {response.text}", flush=True)
+            return []
+
+        data = response.json()
+        # Cuelinks API typically returns deals under a 'deals' or root list structure
+        deals_list = data.get("deals", data) if isinstance(data, dict) else data
+
+        if not isinstance(deals_list, list):
+            print(f"⚠️ Unexpected Cuelinks API response format: {data}", flush=True)
+            return []
+
+        print(f"📦 Retrieved {len(deals_list)} raw deals from Cuelinks.", flush=True)
+
+        for item in deals_list:
+            # Map Cuelinks JSON fields to your pipeline schema
+            title = item.get("title") or item.get("name", "Hot Deal")
+            url = item.get("url") or item.get("affiliate_url", "")
+            image = item.get("image_url") or item.get("image", "")
+            platform = item.get("merchant") or item.get("store", "E-Commerce")
+            
+            try:
+                price = float(item.get("special_price") or item.get("price", 0))
+                mrp = float(item.get("mrp") or item.get("value", price))
+            except (ValueError, TypeError):
+                continue
+
+            if url and price > 0:
+                products.append({
+                    "title": title,
+                    "url": url,
+                    "image": image,
+                    "platform": platform,
+                    "price": price,
+                    "mrp": mrp
+                })
+
+    except Exception as e:
+        print(f"❌ Error communicating with Cuelinks API: {e}", flush=True)
+
+    return products
 
 def send_telegram_post(deal: dict, tracker_info: dict):
     """Sends formatted flash deal alert with DIY price history insights."""
@@ -173,69 +205,42 @@ def send_telegram_post(deal: dict, tracker_info: dict):
         print(f"⚠️ Failed to send text message: {e}", flush=True)
 
 def run_deal_pipeline():
-    print("DEBUG: Initializing fetcher and price tracker...", flush=True)
+    print("DEBUG: Initializing price tracker...", flush=True)
     try:
-        fetcher = MultiEcomFetcher()
         tracker = DIYPriceTracker()  # Initialized with SQLite database
-        print("DEBUG: Fetcher and tracker initialized successfully.", flush=True)
+        print("DEBUG: Price tracker initialized successfully.", flush=True)
     except Exception as e:
-        print(f"❌ CRITICAL ERROR during initialization: {e}", flush=True)
+        print(f"❌ CRITICAL ERROR during tracker initialization: {e}", flush=True)
         return
 
     valid_deals = []
+    extracted_products = fetcher_deals = fetch_cuelinks_deals()
 
-    print(f"🚀 Running Flash Deals & Deals of the Day Pipeline ({len(FLASH_DEAL_SOURCES)} targeted live hubs)...", flush=True)
-
-    for source, platform, source_type in FLASH_DEAL_SOURCES:
-        print(f"\nScanning Live Deal Hub [{platform}] -> {source}", flush=True)
-        extracted_products = []
-
-        try:
-            if platform.lower() == "amazon":
-                extracted_products = fetcher.fetch_amazon_search(source)
-            elif platform.lower() == "myntra":
-                extracted_products = fetcher.fetch_myntra_search(source)
-            elif platform.lower() == "ajio":
-                extracted_products = fetcher.fetch_ajio_search(source)
-            elif platform.lower() == "croma":
-                extracted_products = fetcher.fetch_croma_search(source)
-            elif platform.lower() == "meesho":
-                extracted_products = fetcher.fetch_meesho_search(source)
-            elif platform.lower() == "shopsy":
-                extracted_products = fetcher.fetch_shopsy_search(source)
-            elif platform.lower() == "mamaearth":
-                extracted_products = fetcher.fetch_mamaearth_search(source)
-            print(f"DEBUG [{platform}]: Extracted {len(extracted_products)} raw items.", flush=True)
-        except Exception as e:
-            print(f"⚠️ Error fetching live deals from {platform} ({source}): {e}", flush=True)
+    for product in extracted_products:
+        url = product.get("url")
+        if not url or already_posted(url):
             continue
 
-        for product in extracted_products:
-            url = product.get("url")
-            if not url or already_posted(url):
-                continue
+        price = float(product.get("price", 0))
+        mrp = float(product.get("mrp", price))
+        discount = 0.0
+        if mrp > price > 0:
+            discount = round(((mrp - price) / mrp) * 100, 2)
 
-            price = float(product.get("price", 0))
-            mrp = float(product.get("mrp", price))
-            discount = 0.0
-            if mrp > price > 0:
-                discount = round(((mrp - price) / mrp) * 100, 2)
+        if discount >= DISCOUNT_THRESHOLD:
+            product["discount"] = discount
+            
+            tracker_info = tracker.track_and_evaluate(
+                url=url,
+                title=product.get("title"),
+                platform=product.get("platform"),
+                price=price,
+                mrp=mrp
+            )
+            product["tracker_info"] = tracker_info
 
-            if discount >= DISCOUNT_THRESHOLD:
-                product["discount"] = discount
-                product["platform"] = platform
-                
-                tracker_info = tracker.track_and_evaluate(
-                    url=url,
-                    title=product.get("title"),
-                    platform=platform,
-                    price=price,
-                    mrp=mrp
-                )
-                product["tracker_info"] = tracker_info
-
-                valid_deals.append(product)
-                print(f" -> Flash Deal Captured: {product.get('title')} ({discount}% off) on {platform}", flush=True)
+            valid_deals.append(product)
+            print(f" -> Flash Deal Captured: {product.get('title')} ({discount}% off) on {product.get('platform')}", flush=True)
 
     if not valid_deals:
         print("\nNo new 40%+ flash deals discovered in this run.", flush=True)
