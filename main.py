@@ -7,11 +7,50 @@ import requests
 from urllib.parse import urlparse
 from core.price_tracker import DIYPriceTracker
 
+# =========================================================================
+# 🎛️ E-COMMERCE PLATFORM FILTER TOGGLE (Set True to Enable, False to Disable)
+# =========================================================================
+ENABLED_PLATFORMS = {
+    # Heavyweight Retail & Marketplace
+    "amazon": True,         # Amazon India
+    "flipkart": True,       # Flipkart
+    "meesho": True,         # Meesho
+    "shopsy": True,         # Shopsy
+    "tata cliq": True,      # Tata Cliq / Tata Cliq Luxury
+    
+    # Fashion & Apparel
+    "myntra": True,         # Myntra
+    "ajio": True,           # Ajio
+    "nykaa": True,          # Nykaa / Nykaa Fashion
+    "shoppers stop": True,  # Shoppers Stop
+    "urbanic": True,        # Urbanic
+    
+    # Electronics & Gadgets
+    "croma": True,          # Croma
+    "vijay sales": True,    # Vijay Sales
+    "reliance digital": True,# Reliance Digital
+    "samsung": True,        # Samsung India
+    "realme": True,         # Realme Store
+    
+    # Beauty, Personal Care & Baby
+    "mamaearth": True,      # Mamaearth
+    "firstcry": True,       # FirstCry
+    "plum": True,           # Plum Goodness
+    "beardo": True,         # Beardo
+    
+    # Home, Furniture & Lifestyle
+    "pepperfry": True,      # Pepperfry
+    "urban ladder": True,   # Urban Ladder
+    
+    # Quick Commerce / Grocery
+    "swiggy": True,         # Swiggy Instamart/Deals
+    "zepto": True,          # Zepto
+}
+
 # Configuration
-DISCOUNT_THRESHOLD = 40.0  # 🔥 40% and above heavy discount threshold
+DISCOUNT_THRESHOLD = 40.0  # 🔥 Minimum discount threshold percentage (e.g., 40%)
 CUELINKS_API_URL = "https://developers.cuelinks.com/pub_api/v3/offers"
 
-# Use an absolute path based on this script's directory so history persists correctly
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_FILE = os.path.join(BASE_DIR, "posted_deals.txt")
 
@@ -55,34 +94,44 @@ def already_posted(url: str) -> bool:
 def mark_as_posted(url: str):
     deal_id = get_canonical_deal_id(url)
     if not deal_id:
-        print(f"⚠️ Warning: Could not extract deal ID from URL: {url}", flush=True)
         return
         
     posted_ids = set()
-    
     if not os.path.exists(HISTORY_FILE):
-        print(f"📁 Initializing history file at: {HISTORY_FILE}", flush=True)
         with open(HISTORY_FILE, "w") as f:
             pass
 
     try:
         with open(HISTORY_FILE, "r") as f:
             posted_ids = set(f.read().splitlines())
-    except Exception as e:
-        print(f"⚠️ Error reading history file: {e}", flush=True)
+    except Exception:
+        pass
             
     posted_ids.add(deal_id)
-        
     posted_list = list(posted_ids)[-2000:]
     try:
         with open(HISTORY_FILE, "w") as f:
             f.write("\n".join(posted_list) + "\n")
-        print(f"📝 Successfully saved deal ID [{deal_id}] to history.", flush=True)
+        print(f"📝 Saved deal ID [{deal_id}] to history.", flush=True)
     except Exception as e:
-        print(f"⚠️ Error writing to history file: {e}", flush=True)
+        print(f"⚠️ Error writing history: {e}", flush=True)
+
+def is_platform_enabled(platform_name: str) -> bool:
+    """Matches the merchant name against the ENABLED_PLATFORMS config."""
+    if not platform_name:
+        return True
+
+    platform_lower = platform_name.lower().strip()
+    
+    for key, is_enabled in ENABLED_PLATFORMS.items():
+        if key in platform_lower:
+            return is_enabled
+            
+    # Default to True for unlisted minor merchants, or change to False for strict filtering
+    return True
 
 def fetch_cuelinks_deals() -> list:
-    """Fetches live curated deal feeds from the Cuelinks V3 API."""
+    """Fetches live curated deal feeds from Cuelinks V3 API and applies platform toggles."""
     api_key = os.getenv("CUELINKS_API_KEY")
     if not api_key:
         print("❌ CRITICAL ERROR: CUELINKS_API_KEY secret is missing!", flush=True)
@@ -112,27 +161,27 @@ def fetch_cuelinks_deals() -> list:
         print(f"📦 Retrieved {len(deals_list)} raw items from Cuelinks V3.", flush=True)
 
         for item in deals_list:
-            # Print raw item structure keys for diagnostics if needed
             title = item.get("title") or item.get("name") or item.get("description", "Hot Deal")
             url = item.get("tracking_url") or item.get("affiliate_url") or item.get("url", "")
             image = item.get("image_url") or item.get("image", "")
             
-            # Extract platform/merchant cleanly (V3 returns campaign as an object or string)
+            # Extract campaign/merchant name
             campaign_field = item.get("campaign")
             if isinstance(campaign_field, dict):
                 platform = campaign_field.get("name", "E-Commerce")
             else:
                 platform = item.get("merchant") or item.get("store") or str(campaign_field or "E-Commerce")
-            
-            # Fallback parsing for pricing fields across different V3 schema variants
+
+            # Platform Toggle Check
+            if not is_platform_enabled(platform):
+                print(f"🚫 Skipped Disabled Platform [{platform}]: {title[:30]}...", flush=True)
+                continue
+
             try:
                 price = float(item.get("special_price") or item.get("price") or item.get("selling_price", 0))
                 mrp = float(item.get("mrp") or item.get("value") or item.get("list_price", price))
             except (ValueError, TypeError):
                 price, mrp = 0.0, 0.0
-
-            # Diagnostic logging to see what values are coming through
-            print(f"🔍 Item: {title[:35]}... | Price: {price} | MRP: {mrp} | Store: {platform}", flush=True)
 
             if url:
                 products.append({
@@ -150,7 +199,7 @@ def fetch_cuelinks_deals() -> list:
     return products
 
 def send_telegram_post(deal: dict, tracker_info: dict):
-    """Sends formatted flash deal alert with DIY price history insights."""
+    """Sends formatted flash deal alert to Telegram channel."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHANNEL_ID")
 
@@ -232,11 +281,9 @@ def run_deal_pipeline():
         if mrp > price > 0:
             discount = round(((mrp - price) / mrp) * 100, 2)
 
-        # Fallback for testing: if Cuelinks offers feed doesn't provide explicit numeric MRPs, 
-        # you can temporarily adjust this rule or accept deals that have tracking URLs.
-        if discount >= DISCOUNT_THRESHOLD or (price > 0 and mrp == price): 
-            # Note: change condition if you want to inspect items even without 40% tags initially
-            product["discount"] = discount if discount > 0 else 0.0
+        # Apply Discount Threshold
+        if discount >= DISCOUNT_THRESHOLD:
+            product["discount"] = discount
             
             tracker_info = tracker.track_and_evaluate(
                 url=url,
@@ -248,10 +295,10 @@ def run_deal_pipeline():
             product["tracker_info"] = tracker_info
 
             valid_deals.append(product)
-            print(f" -> Captured Deal: {product.get('title')} ({discount}% off) on {product.get('platform')}", flush=True)
+            print(f" -> Best Deal Captured: {product.get('title')} ({discount}% off) on {product.get('platform')}", flush=True)
 
     if not valid_deals:
-        print("\nNo matching deals processed in this run (check item prices/discounts above).", flush=True)
+        print("\nNo new matching 40%+ deals found after applying platform filters.", flush=True)
         return
 
     print(f"\nDiscovered {len(valid_deals)} deal(s). Broadcasting to Telegram...", flush=True)
