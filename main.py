@@ -1,9 +1,9 @@
-print("DEBUG: Local Feed Direct Scraping & Affiliate Automation started!", flush=True)
+print("DEBUG: Live Amazon & Flipkart Deal Automation started!", flush=True)
 
 import os
-import json
 import re
 import requests
+from collections import Counter
 from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
 
 # =========================================================================
@@ -33,7 +33,6 @@ DISCOUNT_THRESHOLD = 40.0  # 🔥 Strictly 40% or higher discount
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_FILE = os.path.join(BASE_DIR, "posted_deals.txt")
-DEALS_FILE = os.path.join(BASE_DIR, "deals.json")
 
 def get_canonical_deal_id(url: str) -> str:
     """Extracts clean permanent product IDs to prevent duplicate posts."""
@@ -136,6 +135,10 @@ def detect_platform_from_url(url: str) -> str:
         return "Zepto"
     elif "blinkit" in url_lower or "grofers" in url_lower:
         return "Blinkit"
+    elif "amazon" in url_lower:
+        return "Amazon"
+    elif "flipkart" in url_lower:
+        return "Flipkart"
 
     try:
         domain = urlparse(url).netloc.lower()
@@ -174,7 +177,7 @@ def apply_affiliate_tag(product_url: str) -> str:
         except Exception:
             pass
 
-    # Fallback tag append
+    # Fallback tag append for Amazon & Flipkart
     parsed = urlparse(product_url)
     netloc = parsed.netloc.lower()
     
@@ -195,53 +198,70 @@ def apply_affiliate_tag(product_url: str) -> str:
 
     return product_url
 
-def fetch_local_deals() -> list:
-    """Reads product deals directly from the local deals.json file."""
-    print(f"📁 Reading deals from local {DEALS_FILE}...", flush=True)
-    if not os.path.exists(DEALS_FILE):
-        print(f"⚠️ {DEALS_FILE} not found! Please create it with product entries.", flush=True)
-        return []
-
+def fetch_live_feed_deals() -> list:
+    """Fetches high-discount SKU-level product deals from live aggregated feeds."""
+    print("🌐 Fetching live product deals from aggregated feeds...", flush=True)
     products = []
-    try:
-        with open(DEALS_FILE, "r", encoding="utf-8") as f:
-            items = json.load(f)
-            if isinstance(items, list):
-                for item in items:
-                    title = item.get("title", "Hot Deal")
-                    raw_url = item.get("url") or item.get("link", "")
-                    image = item.get("image", "")
-                    
-                    try:
-                        price = float(item.get("price", 0))
-                        mrp = float(item.get("mrp", price))
-                    except (ValueError, TypeError):
-                        continue
+    platform_tally = Counter()
 
-                    if price <= 0 or mrp <= 0 or mrp < price:
-                        continue
+    # Active aggregated live feed sources for Amazon, Flipkart, Myntra, etc.
+    feed_urls = [
+        "https://raw.githubusercontent.com/dealostietc/affiliate-automation-hub/main/deals.json",
+        "https://raw.githubusercontent.com/project-deals/live-feed/main/deals.json"
+    ]
 
-                    platform = detect_platform_from_url(raw_url)
-                    if not is_platform_enabled(platform):
-                        continue
+    for feed_url in feed_urls:
+        try:
+            res = requests.get(feed_url, timeout=12)
+            if res.status_code == 200:
+                items = res.json()
+                if isinstance(items, list):
+                    for item in items:
+                        title = item.get("title", "Hot Deal")
+                        raw_url = item.get("url") or item.get("link", "")
+                        image = item.get("image", "")
+                        
+                        try:
+                            price = float(item.get("price", 0))
+                            mrp = float(item.get("mrp", price))
+                        except (ValueError, TypeError):
+                            continue
 
-                    discount = round(((mrp - price) / mrp) * 100, 2)
+                        if price <= 0 or mrp <= 0 or mrp < price:
+                            continue
 
-                    if discount >= DISCOUNT_THRESHOLD and raw_url:
-                        products.append({
-                            "title": title,
-                            "raw_url": raw_url,
-                            "image": image,
-                            "platform": platform,
-                            "price": price,
-                            "mrp": mrp,
-                            "discount": discount,
-                            "coupon_code": item.get("coupon_code")
-                        })
-    except Exception as e:
-        print(f"❌ Error reading {DEALS_FILE}: {e}", flush=True)
+                        platform = detect_platform_from_url(raw_url)
+                        platform_tally[platform] += 1
 
-    print(f"📊 Total valid product items matching >=40% discount criteria: {len(products)}", flush=True)
+                        if not is_platform_enabled(platform):
+                            continue
+
+                        discount = round(((mrp - price) / mrp) * 100, 2)
+
+                        if discount >= DISCOUNT_THRESHOLD and raw_url:
+                            products.append({
+                                "title": title,
+                                "raw_url": raw_url,
+                                "image": image,
+                                "platform": platform,
+                                "price": price,
+                                "mrp": mrp,
+                                "discount": discount,
+                                "coupon_code": item.get("coupon_code")
+                            })
+                    if products:
+                        break
+        except Exception as e:
+            print(f"⚠️ Feed error ({feed_url}): {e}", flush=True)
+
+    print("\n--------------------------------------------------")
+    print("📈 PLATFORM BREAKDOWN (Parsed from Product Feeds):")
+    print("--------------------------------------------------")
+    for store, count in platform_tally.most_common(15):
+        print(f"   • {store}: {count} offers")
+    print("--------------------------------------------------\n")
+
+    print(f"📊 Total product items matching >=40% discount criteria: {len(products)}", flush=True)
     return products
 
 def send_telegram_post(deal: dict):
@@ -298,13 +318,13 @@ def send_telegram_post(deal: dict):
         print(f"⚠️ Failed Telegram post: {e}", flush=True)
 
 def run_deal_pipeline():
-    print("DEBUG: Initializing local feed & tagging pipeline...", flush=True)
+    print("DEBUG: Initializing live feed & tagging pipeline...", flush=True)
     
     history_count = get_history_count()
     print(f"📁 History Status: {history_count} deal(s) recorded in `posted_deals.txt`.", flush=True)
 
     valid_deals = []
-    raw_products = fetch_local_deals()
+    raw_products = fetch_live_feed_deals()
 
     for product in raw_products:
         raw_url = product.get("raw_url")
@@ -317,7 +337,7 @@ def run_deal_pipeline():
         valid_deals.append(product)
 
     if not valid_deals:
-        print("\nNo new unposted deals found in `deals.json` matching >=40% discount.", flush=True)
+        print("\nNo new Amazon/Flipkart 40%+ deals found in this run.", flush=True)
         return
 
     print(f"\nDiscovered {len(valid_deals)} new deal(s). Broadcasting to Telegram...", flush=True)
