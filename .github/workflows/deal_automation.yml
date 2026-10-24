@@ -1,7 +1,7 @@
 name: Deal Automation Pipeline
 
 on:
-  workflow_dispatch:  # Allows external triggers via API (e.g., from cron-job.org)
+  workflow_dispatch:  # Triggered externally via cron-job.org API
 
 jobs:
   run-scraper:
@@ -38,7 +38,9 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git stash
           git pull --rebase origin main
+          git stash pop || true
 
       - name: Commit and Push Posted Deals History
         uses: stefanzweifel/git-auto-commit-action@v5
